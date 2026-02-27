@@ -3,8 +3,8 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 
-const Role = sequelize.define(
-  'Role',
+const Permission = sequelize.define(
+  'Permission',
   {
     id: {
       type: DataTypes.INTEGER,
@@ -12,25 +12,25 @@ const Role = sequelize.define(
       autoIncrement: true,
       allowNull: false,
     },
-    name: {
+    key: {
       type: DataTypes.STRING(100),
       allowNull: false,
       unique: true,
+    },
+    label: {
+      type: DataTypes.STRING(150),
+      allowNull: false,
     },
     description: {
       type: DataTypes.TEXT,
       allowNull: true,
     },
-    is_system_role: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: false,
-    },
   },
   {
-    tableName: 'roles',
+    tableName: 'permissions',
     timestamps: true,
     underscored: true,
   }
 );
 
-module.exports = Role;
+module.exports = Permission;

@@ -6,6 +6,7 @@ const morgan = require('morgan');
 const { globalErrorHandler } = require('./src/utils/asyncWrapper');
 const { sequelize } = require('./src/config/database');
 const authRoutes = require('./src/routes/authRoutes');
+const roleRoutes = require('./src/routes/roleRoutes');
 
 const app = express();
 // ── Security & Parsing ────────────────────────────────────────────────────────
@@ -15,7 +16,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 // ── Routes ────────────────────────────────────────────────────────────────────
-app.use('/api/auth', authRoutes);
+app.use('/api/auth',  authRoutes);
+app.use('/api/roles', roleRoutes);
 // ── Health Check ──────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

@@ -11,11 +11,43 @@ const CareerPath = require('./CareerPath');
 const CareerPathStage = require('./CareerPathStage');
 const EmployeeCareerPath = require('./EmployeeCareerPath');
 const Role = require('./Role');
+const Permission = require('./Permission');
+const RolePermission = require('./RolePermission');
+const EmployeeRole = require('./EmployeeRole');
 const ActivityLog = require('./ActivityLog');
 const ErrorLog = require('./ErrorLog');
 const SchedulerLog = require('./SchedulerLog');
 
-// ── Department ↔ Employee (1:N) ──────────────────────────────────────────────
+// ── Employee ↔ Role (M2M via employee_roles) ────────────────────────────────────
+// is_primary flag on the junction lets us identify the one "dashboard-routing" role
+Employee.belongsToMany(Role, {
+  through:    EmployeeRole,
+  foreignKey: 'employee_id',
+  otherKey:   'role_id',
+  as:         'roles',
+});
+Role.belongsToMany(Employee, {
+  through:    EmployeeRole,
+  foreignKey: 'role_id',
+  otherKey:   'employee_id',
+  as:         'employees',
+});
+
+// ── Role ↔ Permission (M2M via role_permissions) ───────────────────────────────
+Role.belongsToMany(Permission, {
+  through: RolePermission,
+  foreignKey: 'role_id',
+  otherKey: 'permission_id',
+  as: 'permissions',
+});
+Permission.belongsToMany(Role, {
+  through: RolePermission,
+  foreignKey: 'permission_id',
+  otherKey: 'role_id',
+  as: 'roles',
+});
+
+// ── Department ↔ Employee (1:N) ────────────────────────────────────────────────
 Department.hasMany(Employee, { foreignKey: 'department_id', as: 'employees' });
 Employee.belongsTo(Department, { foreignKey: 'department_id', as: 'department' });
 
@@ -72,6 +104,9 @@ module.exports = {
   CareerPathStage,
   EmployeeCareerPath,
   Role,
+  Permission,
+  RolePermission,
+  EmployeeRole,
   ActivityLog,
   ErrorLog,
   SchedulerLog,

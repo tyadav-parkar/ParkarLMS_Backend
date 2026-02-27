@@ -13,7 +13,13 @@ const authMiddleware = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = { id: decoded.id, email: decoded.email, role: decoded.role };
+    req.user = {
+      id:          decoded.id,
+      email:       decoded.email,
+      role:        decoded.role,                                        // primary role string (backward-compat)
+      roles:       decoded.roles || [decoded.role].filter(Boolean),    // full roles array
+      permissions: decoded.permissions || [],                           // flat permission keys array
+    };
     next();
   } catch (err) {
     return res.status(401).json({ success: false, message: 'Token invalid or expired' });

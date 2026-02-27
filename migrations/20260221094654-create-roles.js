@@ -1,5 +1,11 @@
 'use strict';
 
+/**
+ * Creates the roles table BEFORE employees so employees.role_id can FK into it.
+ * No permissions JSONB column — permissions are handled by the separate
+ * permissions + role_permissions tables (migration 20260225100002).
+ */
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
@@ -19,15 +25,10 @@ module.exports = {
         type: Sequelize.TEXT,
         allowNull: true,
       },
-      permissions: {
-        type: Sequelize.JSONB,
-        allowNull: false,
-        defaultValue: {},
-      },
       is_system_role: {
         type: Sequelize.BOOLEAN,
         allowNull: false,
-        defaultValue: false,  // system roles cannot be deleted
+        defaultValue: false,
       },
       created_at: {
         type: Sequelize.DATE,
@@ -42,7 +43,7 @@ module.exports = {
     });
   },
 
-  async down(queryInterface, Sequelize) {
+  async down(queryInterface) {
     await queryInterface.dropTable('roles');
   },
 };

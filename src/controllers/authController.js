@@ -2,9 +2,39 @@
 
 const jwt = require('jsonwebtoken');
 const { msalClient, SCOPES } = require('../config/msalConfig');
-const { Employee, Role, Department } = require('../models');
+const { Employee, Role, Department, Permission } = require('../models');
 const { logActivity, LOG_ACTIONS } = require('../services/activityLogger');
 const asyncWrapper = require('../utils/asyncWrapper');
+
+/**
+ * buildRolePayload — derives JWT role fields from the M2M roles array.
+ *
+ * @param {Array} roles - array of Role instances (each with .permissions and .EmployeeRole junction)
+ * @returns {{ primaryRole: string, roleNames: string[], permissionKeys: string[] }}
+ *
+ * primaryRole   = the role marked is_primary in employee_roles (for dashboard routing)
+ * roleNames     = all role names the employee currently holds
+ * permissionKeys = deduplicated UNION of all permissions across all roles
+ */
+function buildRolePayload(roles = []) {
+  const permSet   = new Set();
+  const roleNames = [];
+  let   primaryRole = null;
+
+  for (const role of roles) {
+    roleNames.push(role.name);
+    if (role.EmployeeRole?.is_primary) primaryRole = role.name;
+    for (const perm of (role.permissions || [])) {
+      permSet.add(perm.key);
+    }
+  }
+
+  if (!roleNames.length) roleNames.push('employee');
+  // Fall back: if no is_primary flag found, use first role in array
+  if (!primaryRole) primaryRole = roleNames[0];
+
+  return { primaryRole, roleNames, permissionKeys: [...permSet] };
+}
 // ── 1. microsoftLogin ─────────────────────────────────────────────────────────
 // GET /api/auth/microsoft/login  (public)
 const microsoftLogin = asyncWrapper(async (req, res) => {
@@ -34,9 +64,20 @@ const microsoftCallback = asyncWrapper(async (req, res) => {
 
   const emailFromAzure = tokenResponse.account.username.toLowerCase().trim();
 
-  // Look up the employee by email (scope: withInactive so we can detect deactivated accounts)
+  // JOIN Employee → Roles (M2M) → Permissions in a single query
   const employee = await Employee.scope('withInactive').findOne({
     where: { email: emailFromAzure },
+    include: [{
+      model: Role,
+      as: 'roles',
+      through: { attributes: ['is_primary'] }, // include is_primary for primary role detection
+      include: [{
+        model: Permission,
+        as: 'permissions',
+        through: { attributes: [] },
+        attributes: ['key'],
+      }],
+    }],
   });
 
   if (!employee) {
@@ -47,15 +88,21 @@ const microsoftCallback = asyncWrapper(async (req, res) => {
     return res.redirect(`${process.env.FRONTEND_URL}/unauthorized?reason=deactivated`);
   }
 
-  // Fetch role permissions
-  const roleRecord = await Role.findOne({ where: { name: employee.role } });
-
   // Update last_login
   await employee.update({ last_login: new Date() });
 
-  // Issue LMS JWT
+  // Build JWT payload from M2M roles array
+  const { primaryRole, roleNames, permissionKeys } = buildRolePayload(employee.roles || []);
+
+  // Issue LMS JWT — includes roles array + primary role + union of all permissions
   const lmsToken = jwt.sign(
-    { id: employee.id, email: employee.email, role: employee.role },
+    {
+      id:          employee.id,
+      email:       employee.email,
+      role:        primaryRole,     // single primary role string (dashboard routing + backward compat)
+      roles:       roleNames,       // full M2M roles array
+      permissions: permissionKeys,  // union of all roles' permission keys
+    },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
   );
@@ -74,15 +121,23 @@ const microsoftCallback = asyncWrapper(async (req, res) => {
 // ── 3. getMe ──────────────────────────────────────────────────────────────────
 // GET /api/auth/me  (protected — requires authMiddleware)
 const getMe = asyncWrapper(async (req, res) => {
-  // Use withInactive scope so findByPk is NOT blocked by the default is_active:true scope.
-  // We manually check is_active below.
+  // JOIN Employee → Role → Permissions in one query (same pattern as microsoftCallback)
   const employee = await Employee.scope('withInactive').findOne({
     where: { id: req.user.id },
     include: [
+      {
+        model: Role,
+        as: 'roles',
+        through: { attributes: ['is_primary'] }, // include is_primary flag
+        include: [{
+          model: Permission,
+          as: 'permissions',
+          through: { attributes: [] },
+          attributes: ['key', 'label'],
+        }],
+      },
       { model: Department, as: 'department' },
       {
-        // Use unscoped Employee for the manager include — avoids the default scope
-        // filtering out the manager JOIN and returning null for the whole row.
         model: Employee.scope('withInactive'),
         as: 'manager',
         attributes: ['id', 'first_name', 'last_name', 'email'],
@@ -98,10 +153,17 @@ const getMe = asyncWrapper(async (req, res) => {
     return res.status(401).json({ success: false, message: 'Account deactivated' });
   }
 
-  const roleRecord = await Role.findOne({ where: { name: employee.role } });
-  const permissions = roleRecord?.permissions || {};
+  // Build role/permission payload from M2M roles array (same helper as microsoftCallback)
+  const { primaryRole, roleNames, permissionKeys } = buildRolePayload(employee.roles || []);
 
-  res.json({ user: employee, permissions });
+  
+  const userJson = {
+    ...employee.toJSON(),
+    role:  primaryRole,  // single primary role string for dashboard routing
+    roles: roleNames,    // full M2M roles array for permission/multi-role checks
+  };
+
+  res.json({ success: true, user: userJson, permissions: permissionKeys });
 });
 
 // ── 4. logout ─────────────────────────────────────────────────────────────────
