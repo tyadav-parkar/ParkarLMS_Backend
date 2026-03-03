@@ -18,7 +18,8 @@ const authMiddleware = (req, res, next) => {
       email:       decoded.email,
       role:        decoded.role,                                        // primary role string (backward-compat)
       roles:       decoded.roles || [decoded.role].filter(Boolean),    // full roles array
-      permissions: decoded.permissions || [],                           // flat permission keys array
+      permissions: decoded.permissions || [],   
+      systemRole: decoded.systemRole || null,                        // flat permission keys array
     };
     next();
   } catch (err) {

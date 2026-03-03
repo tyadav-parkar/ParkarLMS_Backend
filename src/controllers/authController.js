@@ -10,19 +10,30 @@ const asyncWrapper = require('../utils/asyncWrapper');
  * buildRolePayload — derives JWT role fields from the M2M roles array.
  *
  * @param {Array} roles - array of Role instances (each with .permissions and .EmployeeRole junction)
- * @returns {{ primaryRole: string, roleNames: string[], permissionKeys: string[] }}
+ * @returns {{ primaryRole: string, roleNames: string[], permissionKeys: string[] , syatemRole: string|null}}
  *
  * primaryRole   = the role marked is_primary in employee_roles (for dashboard routing)
  * roleNames     = all role names the employee currently holds
  * permissionKeys = deduplicated UNION of all permissions across all roles
  */
+const SYSTEM_ROLE_PRIORITY = ['admin', 'manager', 'employee'];
 function buildRolePayload(roles = []) {
   const permSet   = new Set();
   const roleNames = [];
   let   primaryRole = null;
+  let   systemRole  = null;
 
   for (const role of roles) {
     roleNames.push(role.name);
+    const sysIndex = SYSTEM_ROLE_PRIORITY.indexOf(role.name.toLowerCase());
+    if (sysIndex !== -1) {
+      if (
+        systemRole === null ||
+        sysIndex < SYSTEM_ROLE_PRIORITY.indexOf(systemRole.toLowerCase())
+      ) {
+        systemRole = role.name; // keep the highest-priority system role
+      }
+    }
     if (role.EmployeeRole?.is_primary) primaryRole = role.name;
     for (const perm of (role.permissions || [])) {
       permSet.add(perm.key);
@@ -31,9 +42,9 @@ function buildRolePayload(roles = []) {
 
   if (!roleNames.length) roleNames.push('employee');
   // Fall back: if no is_primary flag found, use first role in array
-  if (!primaryRole) primaryRole = roleNames[0];
+  if (!primaryRole) primaryRole = systemRole || roleNames[0];
 
-  return { primaryRole, roleNames, permissionKeys: [...permSet] };
+  return { primaryRole, roleNames, permissionKeys: [...permSet], systemRole };
 }
 // ── 1. microsoftLogin ─────────────────────────────────────────────────────────
 // GET /api/auth/microsoft/login  (public)
@@ -92,7 +103,7 @@ const microsoftCallback = asyncWrapper(async (req, res) => {
   await employee.update({ last_login: new Date() });
 
   // Build JWT payload from M2M roles array
-  const { primaryRole, roleNames, permissionKeys } = buildRolePayload(employee.roles || []);
+  const { primaryRole, roleNames, permissionKeys, systemRole } = buildRolePayload(employee.roles || []);
 
   // Issue LMS JWT — includes roles array + primary role + union of all permissions
   const lmsToken = jwt.sign(
@@ -101,7 +112,8 @@ const microsoftCallback = asyncWrapper(async (req, res) => {
       email:       employee.email,
       role:        primaryRole,     // single primary role string (dashboard routing + backward compat)
       roles:       roleNames,       // full M2M roles array
-      permissions: permissionKeys,  // union of all roles' permission keys
+      permissions: permissionKeys, 
+      systemRole: systemRole, // union of all roles' permission keys
     },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }

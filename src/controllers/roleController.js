@@ -61,6 +61,8 @@ const getUsers = asyncWrapper(async (req, res) => {
 
   const { count, rows } = await Employee.scope('withInactive').findAndCountAll({
     where: { ...whereClause, ...searchCondition },
+    distinct: true,
+    column: 'Employee.id',
     include: [
       {
         model: Role,
@@ -236,6 +238,7 @@ const deleteRole = asyncWrapper(async (req, res) => {
 
 // ── POST /api/roles/assign ─────────────────────────────────────────────────────
 // User Management: assign a role to an employee
+const SYSTEM_ROLE_NAMES = ['admin', 'manager', 'employee']; // must match DB
 const assignRole = asyncWrapper(async (req, res) => {
   const { employee_id, role_id } = req.body;
 
@@ -253,17 +256,61 @@ const assignRole = asyncWrapper(async (req, res) => {
 
   
   const previousRoles = employee.roles?.map((r) => r.name) || [];
-  await employee.setRoles([role], { through: { is_primary: true } });
+  const isIncomingSystemRole = SYSTEM_ROLE_NAMES.includes(role.name.toLowerCase());
 
+  if (isIncomingSystemRole) {
+
+  await employee.setRoles([role], { through: { is_primary: true } });
+  }else{
+    const currentSystemRoles = (employee.roles || []).filter(
+      (r) => SYSTEM_ROLE_NAMES.includes(r.name.toLowerCase())
+    );
+
+       if (currentSystemRoles.length === 0) {
+      // No system role found — just do a straight assignment (shouldn't normally happen)
+      await employee.setRoles([role], { through: { is_primary: true } });
+    } else {
+      // Build the new roles array:
+      //   - Keep all system roles (is_primary: true for the highest one)
+      //   - Add the new custom role (is_primary: false — system role is always primary)
+      const roleAssignments = [
+        // System roles: mark the primary system role as is_primary: true
+        ...currentSystemRoles.map((sr, idx) => ({
+          role:       sr,
+          is_primary: idx === 0, // first system role gets is_primary; rest get false
+        })),
+        // New custom role: always is_primary: false
+        { role, is_primary: false },
+      ];
+
+      // Use EmployeeRole directly to set specific through-table values
+      // Step 1: Remove all current role assignments for this employee
+      await EmployeeRole.destroy({ where: { employee_id: employee.id } });
+
+      // Step 2: Re-insert with correct is_primary values
+      await EmployeeRole.bulkCreate(
+        roleAssignments.map(({ role: r, is_primary }) => ({
+          employee_id: employee.id,
+          role_id:     r.id,
+          is_primary,
+        }))
+      );
+    }
+  }
   logActivity({
     employeeId: req.user.id,
     actionType: 'ROLE_ASSIGNED',
     actionDescription: `Role "${role.name}" assigned to ${employee.email} by ${req.user.email}`,
     targetType: 'employee',
     targetId: employee.id,
-    metadata: { previous_roles: previousRoles, new_role: role.name },
+    metadata: { previous_roles: previousRoles, new_role: role.name, assignment_type:   isIncomingSystemRole ? 'system_replace' : 'custom_additive', },
     req,
   });
+
+  const responseMessage = isIncomingSystemRole
+    ? `System role "${role.name}" assigned to ${employee.first_name} ${employee.last_name}. Previous roles replaced.`
+    : `Custom role "${role.name}" added to ${employee.first_name} ${employee.last_name}. System role preserved.`;
+
 
   res.json({
     success: true,

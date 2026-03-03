@@ -6,9 +6,12 @@
  */
 const requireRole = (...allowedRoles) => (req, res, next) => {
   const roles = req.user.roles || [req.user.role];
-  if (roles.includes('admin')) return next(); // admin implicit superuser
+  const systemRole = req.user.systemRole || null;
+  if (roles.includes('admin') || systemRole === 'admin') return next(); // admin implicit superuser
   if (allowedRoles.some((r) => roles.includes(r))) return next();
+  if (systemRole && allowedRoles.includes(systemRole)) return next();
   return res.status(403).json({ success: false, message: 'Insufficient role' });
+
 };
 
 /**
@@ -22,7 +25,8 @@ const requirePermission = (permission) => (req, res, next) => {
   }
   // Admin bypasses all permission checks (check full roles array)
   const roles = req.user.roles || [req.user.role];
-  if (roles.includes('admin')) return next();
+    const systemRole = req.user.systemRole || null;
+  if (roles.includes('admin') || systemRole === 'admin') return next();
 
   const permissions = req.user.permissions || []; // flat array of key strings from JWT
   if (!permissions.includes(permission)) {
@@ -49,7 +53,8 @@ const requireAnyPermission = (...permissions) => (req, res, next) => {
   }
   // Admin bypasses all permission checks
   const roles = req.user.roles || [req.user.role];
-  if (roles.includes('admin')) return next();
+  const systemRole = req.user.systemRole || null;
+  if (roles.includes('admin') || systemRole === 'admin') return next();
 
   const userPerms = req.user.permissions || [];
   if (permissions.some((p) => userPerms.includes(p))) return next();
