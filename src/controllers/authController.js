@@ -166,13 +166,13 @@ const getMe = asyncWrapper(async (req, res) => {
   }
 
   // Build role/permission payload from M2M roles array (same helper as microsoftCallback)
-  const { primaryRole, roleNames, permissionKeys } = buildRolePayload(employee.roles || []);
+  const { primaryRole, roleNames, permissionKeys, systemRole } = buildRolePayload(employee.roles || []);
 
-  
   const userJson = {
     ...employee.toJSON(),
-    role:  primaryRole,  // single primary role string for dashboard routing
-    roles: roleNames,    // full M2M roles array for permission/multi-role checks
+    role:       primaryRole,  // single primary role string for dashboard routing
+    roles:      roleNames,    // full M2M roles array for permission/multi-role checks
+    systemRole,               // highest system role — required by isRole() fallback on page refresh
   };
 
   res.json({ success: true, user: userJson, permissions: permissionKeys });

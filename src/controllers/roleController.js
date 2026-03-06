@@ -62,7 +62,7 @@ const getUsers = asyncWrapper(async (req, res) => {
   const { count, rows } = await Employee.scope('withInactive').findAndCountAll({
     where: { ...whereClause, ...searchCondition },
     distinct: true,
-    column: 'Employee.id',
+    col: 'id',
     include: [
       {
         model: Role,
@@ -215,11 +215,24 @@ const deleteRole = asyncWrapper(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Reassign target role not found' });
   }
 
-  // Reassign all employees who had this role in the junction table
-  const [affected] = await EmployeeRole.update(
-    { role_id: reassignTarget.id },
-    { where: { role_id: role.id } }  // update junction rows pointing to deleted role
-  );
+  // Re assign all employees who had this role in the junction table.
+  // Edge case: if an employee already holds the reassign target role, a plain
+  // UPDATE would create a duplicate PK (employee_id, role_id) and crash.
+  // Fix: for each affected row, update only if the employee doesn't already
+  // have the target; otherwise just delete the redundant row.
+  const affectedRows = await EmployeeRole.findAll({ where: { role_id: role.id } });
+
+  for (const row of affectedRows) {
+    const alreadyHasTarget = await EmployeeRole.findOne({
+      where: { employee_id: row.employee_id, role_id: reassignTarget.id },
+    });
+    if (alreadyHasTarget) {
+      await row.destroy(); // already has the target — just drop the deleted role's row
+    } else {
+      await row.update({ role_id: reassignTarget.id });
+    }
+  }
+  const affected = affectedRows.length;
 
   await role.destroy(); // role_permissions rows cascade-delete via FK ON DELETE CASCADE
 
@@ -311,10 +324,9 @@ const assignRole = asyncWrapper(async (req, res) => {
     ? `System role "${role.name}" assigned to ${employee.first_name} ${employee.last_name}. Previous roles replaced.`
     : `Custom role "${role.name}" added to ${employee.first_name} ${employee.last_name}. System role preserved.`;
 
-
   res.json({
     success: true,
-    message: `Role "${role.name}" assigned to ${employee.first_name} ${employee.last_name}.`,
+    message: responseMessage,
     note: 'Role change takes effect on the employee\'s next login.',
   });
 });
