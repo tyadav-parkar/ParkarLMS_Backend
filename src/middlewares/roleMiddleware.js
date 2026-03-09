@@ -5,44 +5,59 @@
  * Usage: router.get('/x', authMiddleware, requireRole('admin'), handler)
  */
 const requireRole = (...allowedRoles) => (req, res, next) => {
-  const roles = req.user.roles || [req.user.role];
-  const systemRole = req.user.systemRole || null;
-  if (roles.includes('admin') || systemRole === 'admin') return next(); // admin implicit superuser
-  if (allowedRoles.some((r) => roles.includes(r))) return next();
-  if (systemRole && allowedRoles.includes(systemRole)) return next();
-  return res.status(403).json({ success: false, message: 'Insufficient role' });
+  const roles      = (req.user.roles || [req.user.role]).map(r => r?.toLowerCase());
+  const systemRole = req.user.systemRole?.toLowerCase() || null;
 
+  // Admin is always allowed
+  if (roles.includes('admin') || systemRole === 'admin') return next();
+
+  // Check if user has any of the allowed roles (case-insensitive)
+  const allowed = allowedRoles.map(r => r.toLowerCase());
+  if (allowed.some(r => roles.includes(r))) return next();
+  if (systemRole && allowed.includes(systemRole)) return next();
+
+  return res.status(403).json({ success: false, message: 'Insufficient role' });
 };
 
 /**
  * requirePermission — checks the permissions[] array from the JWT.
  * Zero DB queries — permissions travel with the token.
- * Usage: router.post('/roles', authMiddleware, requirePermission('access_to_roles_permission'), handler)
+ *
+ * Admin bypass: always passes.
+ * Everyone else: must have the exact permission key in their JWT permissions[].
+ *
+ * Usage: router.post('/roles', authMiddleware, requirePermission('role_edit'), handler)
  */
 const requirePermission = (permission) => (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ success: false, message: 'Authentication required' });
   }
-  // Admin bypasses all permission checks (check full roles array)
-  const roles = req.user.roles || [req.user.role];
-    const systemRole = req.user.systemRole || null;
+
+  const roles      = (req.user.roles || [req.user.role]).map(r => r?.toLowerCase());
+  const systemRole = req.user.systemRole?.toLowerCase() || null;
+
+  // Admin bypasses all permission checks
   if (roles.includes('admin') || systemRole === 'admin') return next();
 
-  const permissions = req.user.permissions || []; // flat array of key strings from JWT
-  if (!permissions.includes(permission)) {
-    return res.status(403).json({
-      success: false,
-      message: `Access denied. Required permission: ${permission}`,
-      required: permission,
-      yourRole: req.user.role,
-    });
-  }
-  return next();
+  // Check explicit permission — no system role bypass here.
+  // Manager/employee must have the permission explicitly assigned via a role.
+  const permissions = req.user.permissions || [];
+  if (permissions.includes(permission)) return next();
+
+  return res.status(403).json({
+    success: false,
+    message: `Access denied. Required permission: ${permission}`,
+    required: permission,
+    yourRole: req.user.role,
+  });
 };
 
 /**
  * requireAnyPermission — passes if the user has AT LEAST ONE of the listed permissions.
- * Use for read/list routes where the sidebar shows the module for either view OR edit holders.
+ * Use for read/list routes where sidebar shows module for either view OR edit holders.
+ *
+ * Admin bypass: always passes.
+ * Everyone else: must have at least one of the listed permission keys.
  *
  * Usage:
  *   router.get('/', authMiddleware, requireAnyPermission('role_view', 'role_edit'), getRoles);
@@ -51,13 +66,16 @@ const requireAnyPermission = (...permissions) => (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ success: false, message: 'Authentication required' });
   }
+
+  const roles = (req.user.roles || [req.user.role]).map(r => r?.toLowerCase());
+  const systemRole = req.user.systemRole?.toLowerCase() || null;
+
   // Admin bypasses all permission checks
-  const roles = req.user.roles || [req.user.role];
-  const systemRole = req.user.systemRole || null;
   if (roles.includes('admin') || systemRole === 'admin') return next();
 
+  // Check if user has at least one of the required permissions
   const userPerms = req.user.permissions || [];
-  if (permissions.some((p) => userPerms.includes(p))) return next();
+  if (permissions.some(p => userPerms.includes(p))) return next();
 
   return res.status(403).json({
     success: false,
@@ -66,4 +84,8 @@ const requireAnyPermission = (...permissions) => (req, res, next) => {
   });
 };
 
-module.exports = { requireRole, requirePermission, requireAnyPermission };
+module.exports = { 
+  requireRole, 
+  requirePermission, 
+  requireAnyPermission 
+};

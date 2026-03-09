@@ -4,8 +4,6 @@ require('dotenv').config();
 
 const { Sequelize } = require('sequelize');
 
-// ── Sequelize CLI config export (used by sequelize-cli commands) ─────────────
-// sequelize-cli reads this file and expects a plain config object
 const config = {
   username: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
@@ -22,7 +20,6 @@ const config = {
   },
 };
 
-// ── Sequelize runtime instance ────────────────────────────────────────────────
 const sequelize = new Sequelize(
   process.env.DB_NAME,
   process.env.DB_USER,
@@ -41,7 +38,6 @@ const sequelize = new Sequelize(
   }
 );
 
-// ── Connection test helper (called in server.js on startup) ──────────────────
 async function testConnection() {
   try {
     await sequelize.authenticate();
@@ -52,15 +48,36 @@ async function testConnection() {
   }
 }
 
-// ── Exports ───────────────────────────────────────────────────────────────────
-// Named exports for runtime use
-module.exports = { sequelize, Sequelize, testConnection };
+async function withTransaction(callback) {
+  const transaction = await sequelize.transaction();
+  try {
+    const result = await callback(transaction);
+    await transaction.commit();
+    return result;
+  } catch (error) {
+    await transaction.rollback();
+    console.error('[withTransaction] raw error:', error);
+    console.error('[withTransaction] error name:', error?.name);
+    console.error('[withTransaction] error message:', error?.message);
+    console.error('[withTransaction] error original:', error?.original);
+    if (error.statusCode) {
+      throw error;
+    }
+    throw {
+      statusCode: 500,
+      message: error.message || 'Transaction failed',
+    };
+  }
+}
 
-// Sequelize CLI requires the config object to be accessible at module.exports
-// (it reads development/test/production keys — we expose ours under 'development')
+module.exports = {
+  sequelize,
+  Sequelize,
+  testConnection,
+  withTransaction,
+};
+
 module.exports.development = config;
 module.exports.test = config;
 module.exports.production = { ...config, logging: false };
-
-// Default export for convenience (testConnection)
 module.exports.default = testConnection;

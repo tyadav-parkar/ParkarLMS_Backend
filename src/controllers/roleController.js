@@ -1,37 +1,53 @@
 'use strict';
 
 const { Op } = require('sequelize');
-const { Role, Permission, Employee, Department, EmployeeRole } = require('../models');
+const { Role, Permission, Employee, Department, EmployeeRole, RolePermission, sequelize } = require('../models');
 const asyncWrapper = require('../utils/asyncWrapper');
-const { logActivity, LOG_ACTIONS } = require('../services/activityLogger');
+const { logActivity } = require('../services/activityLogger');
+const { withTransaction } = require('../config/database');
+
+const MAX_LIMIT     = 100;
+const DEFAULT_LIMIT = 6;
 
 // ── GET /api/roles ─────────────────────────────────────────────────────────────
-// List all roles with their assigned permissions + employee count
 const getRoles = asyncWrapper(async (req, res) => {
-  const roles = await Role.findAll({
+  const page   = Math.max(1, parseInt(req.query.page,  10) || 1);
+  const limit  = Math.min(MAX_LIMIT, parseInt(req.query.limit, 10) || DEFAULT_LIMIT);
+  const offset = (page - 1) * limit;
+
+  const { count, rows } = await Role.findAndCountAll({
     include: [{
       model: Permission,
       as: 'permissions',
       through: { attributes: [] },
       attributes: ['id', 'key', 'label'],
     }],
-    order: [['name', 'ASC']],
+    order:    [['name', 'ASC']],
+    limit,
+    offset,
+    distinct: true,
   });
 
-  // Attach employee count per role — query junction table (no role_id on employees any more)
   const rolesWithCount = await Promise.all(
-    roles.map(async (role) => {
-      const count = await EmployeeRole.count({ where: { role_id: role.id } });
-      return { ...role.toJSON(), employee_count: count };
+    rows.map(async (role) => {
+      const employeeCount = await EmployeeRole.count({ where: { role_id: role.id } });
+      return { ...role.toJSON(), employee_count: employeeCount };
     })
   );
 
-  res.json({ success: true, data: rolesWithCount });
+  res.json({
+    success: true,
+    data:    rolesWithCount,
+    meta: {
+      total: count,
+      page,
+      limit,
+      pages: Math.ceil(count / limit),
+    },
+  });
 });
 
 // ── GET /api/roles/permissions ─────────────────────────────────────────────────
-// List all available permissions — used by admin UI checkbox list
-// NOTE: this route MUST be registered before /:id in roleRoutes.js
 const getPermissions = asyncWrapper(async (req, res) => {
   const permissions = await Permission.findAll({
     order: [['label', 'ASC']],
@@ -40,36 +56,33 @@ const getPermissions = asyncWrapper(async (req, res) => {
 });
 
 // ── GET /api/roles/users ───────────────────────────────────────────────────────
-// User Management: list all employees with their current role (paginated + searchable)
 const getUsers = asyncWrapper(async (req, res) => {
-  const { page = 1, limit = 20, search = '', role_id } = req.query;
-  const offset = (parseInt(page) - 1) * parseInt(limit);
-
-  const whereClause = {};
-  // Note: role_id is no longer a column on employees — filter is done via the M2M include
+  const page   = Math.max(1, parseInt(req.query.page)  || 1);
+  const limit  = Math.min(MAX_LIMIT, Math.max(1, parseInt(req.query.limit) || DEFAULT_LIMIT));
+  const offset = (page - 1) * limit;
+  const { search = '', role_id } = req.query;
 
   const searchCondition = search
     ? {
         [Op.or]: [
-          { first_name:       { [Op.iLike]: `%${search}%` } },
-          { last_name:        { [Op.iLike]: `%${search}%` } },
-          { email:            { [Op.iLike]: `%${search}%` } },
-          { employee_number:  { [Op.iLike]: `%${search}%` } },
+          { first_name:      { [Op.iLike]: `%${search}%` } },
+          { last_name:       { [Op.iLike]: `%${search}%` } },
+          { email:           { [Op.iLike]: `%${search}%` } },
+          { employee_number: { [Op.iLike]: `%${search}%` } },
         ],
       }
     : {};
 
   const { count, rows } = await Employee.scope('withInactive').findAndCountAll({
-    where: { ...whereClause, ...searchCondition },
+    where: searchCondition,
     distinct: true,
     col: 'id',
     include: [
       {
         model: Role,
         as: 'roles',
-        through: { attributes: ['is_primary'] }, // include is_primary for primary role detection
+        through: { attributes: ['is_primary'] },
         attributes: ['id', 'name', 'is_system_role'],
-        // If filtering by role_id, require the join and add a where on the Role model
         ...(role_id ? { where: { id: parseInt(role_id) }, required: true } : {}),
       },
       {
@@ -83,7 +96,7 @@ const getUsers = asyncWrapper(async (req, res) => {
       'email', 'job_title', 'is_active', 'last_login',
     ],
     order: [['first_name', 'ASC'], ['last_name', 'ASC']],
-    limit:  parseInt(limit),
+    limit,
     offset,
   });
 
@@ -92,9 +105,9 @@ const getUsers = asyncWrapper(async (req, res) => {
     data: rows,
     meta: {
       total: count,
-      page:  parseInt(page),
-      limit: parseInt(limit),
-      pages: Math.ceil(count / parseInt(limit)),
+      page,
+      limit,
+      pages: Math.ceil(count / limit),
     },
   });
 });
@@ -114,33 +127,62 @@ const getRole = asyncWrapper(async (req, res) => {
 });
 
 // ── POST /api/roles ────────────────────────────────────────────────────────────
-// Create a custom role with a chosen set of permissions
 const createRole = asyncWrapper(async (req, res) => {
   const { name, description, permission_ids, permissions: permissionsBody } = req.body;
-  const permission_ids_resolved = permission_ids ?? permissionsBody ?? [];
+  const raw = (permission_ids && permission_ids.length > 0) ? permission_ids : (permissionsBody ?? []);
+  const permissionIds = raw.map((p) => (typeof p === 'object' && p !== null ? p.id : p)).filter(Boolean);
+
 
   if (!name?.trim()) {
     return res.status(400).json({ success: false, message: 'Role name is required' });
   }
 
-  const existing = await Role.findOne({ where: { name: name.trim() } });
-  if (existing) {
-    return res.status(409).json({ success: false, message: 'A role with this name already exists' });
-  }
+  const result = await withTransaction(async (transaction) => {
+    const existing = await Role.findOne({
+      where: { name: name.trim() },
+      transaction,
+    });
 
-  const role = await Role.create({
-    name:           name.trim(),
-    description:    description?.trim() || null,
-    is_system_role: false,
-  });
+    if (existing) {
+      throw { statusCode: 409, message: 'A role with this name already exists' };
+    }
 
-  if (permission_ids_resolved.length > 0) {
-    const perms = await Permission.findAll({ where: { id: permission_ids_resolved } });
-    await role.setPermissions(perms); // Sequelize M2M helper
-  }
+    const role = await Role.create({
+      name:           name.trim(),
+      description:    description?.trim() || null,
+      is_system_role: false,
+    }, { transaction });
 
-  const result = await Role.findByPk(role.id, {
-    include: [{ model: Permission, as: 'permissions', through: { attributes: [] } }],
+    // Use bulkCreate on the junction table directly so the transaction
+    // is properly respected. Sequelize's setPermissions() on BelongsToMany
+    // does not reliably propagate the transaction to the junction insert,
+    // which causes the role_permissions rows to be silently skipped.
+    if (permissionIds.length > 0) {
+      const validPerms = await Permission.findAll({
+        where: { id: permissionIds },
+        attributes: ['id'],
+        transaction,
+      });
+
+      if (validPerms.length > 0) {
+        await RolePermission.bulkCreate(
+          validPerms.map((p) => ({ role_id: role.id, permission_id: p.id })),
+          { transaction, returning: false, ignoreDuplicates: true }
+        );
+      }
+    }
+
+    const createdRole = await Role.findByPk(role.id, {
+      include: [{
+        model: Permission,
+        as: 'permissions',
+        through: { attributes: [] },
+        attributes: ['id', 'key', 'label'],
+      }],
+      transaction,
+    });
+
+    return createdRole;
   });
 
   logActivity({
@@ -154,104 +196,150 @@ const createRole = asyncWrapper(async (req, res) => {
 });
 
 // ── PUT /api/roles/:id ─────────────────────────────────────────────────────────
-// Update role (system roles: only permissions can change, not name)
 const updateRole = asyncWrapper(async (req, res) => {
-  const role = await Role.findByPk(req.params.id);
-  if (!role) return res.status(404).json({ success: false, message: 'Role not found' });
+  const { id } = req.params;
 
-  if (!role.is_system_role) {
-    // Custom role: allow name + description change
-    if (req.body.name?.trim()) {
-      const duplicate = await Role.findOne({
-        where: { name: req.body.name.trim(), id: { [Op.ne]: role.id } },
-      });
-      if (duplicate) {
-        return res.status(409).json({ success: false, message: 'Role name already taken' });
-      }
-      await role.update({
-        name:        req.body.name.trim(),
-        description: req.body.description?.trim() ?? role.description,
-      });
+  const result = await withTransaction(async (transaction) => {
+    const role = await Role.findByPk(id, { transaction });
+
+    if (!role) {
+      throw { statusCode: 404, message: 'Role not found' };
     }
-  } else if (req.body.name) {
-    return res.status(403).json({ success: false, message: 'Cannot rename system roles' });
-  }
 
-  // Replace permission set for both system and custom roles
-  // Accept either 'permission_ids' or 'permissions' key from request body
-  const incomingPerms = req.body.permission_ids ?? req.body.permissions;
-  if (incomingPerms !== undefined) {
-    const perms = await Permission.findAll({ where: { id: incomingPerms } });
-    await role.setPermissions(perms); // replaces all existing rows for this role in role_permissions
-  }
+    if (!role.is_system_role) {
+      if (req.body.name?.trim()) {
+        const duplicate = await Role.findOne({
+          where: { name: req.body.name.trim(), id: { [Op.ne]: role.id } },
+          transaction,
+        });
 
-  const result = await Role.findByPk(role.id, {
-    include: [{ model: Permission, as: 'permissions', through: { attributes: [] } }],
+        if (duplicate) {
+          throw { statusCode: 409, message: 'Role name already taken' };
+        }
+
+        await role.update({
+          name:        req.body.name.trim(),
+          description: req.body.description?.trim() ?? role.description,
+        }, { transaction });
+      }
+    } else if (req.body.name) {
+      throw { statusCode: 403, message: 'Cannot rename system roles' };
+    }
+
+    // Replace permission set using direct junction table operations
+    // so the transaction is guaranteed to cover both the delete and insert.
+    const rawPerms = (req.body.permission_ids && req.body.permission_ids.length > 0) ? req.body.permission_ids : req.body.permissions;
+    const incomingPerms = rawPerms !== undefined
+      ? rawPerms.map((p) => (typeof p === 'object' && p !== null ? p.id : p)).filter(Boolean)
+      : undefined;
+    if (incomingPerms !== undefined) {
+      await RolePermission.destroy({
+        where: { role_id: role.id },
+        transaction,
+      });
+
+      if (incomingPerms.length > 0) {
+        const validPerms = await Permission.findAll({
+          where: { id: incomingPerms },
+          attributes: ['id'],
+          transaction,
+        });
+
+        if (validPerms.length > 0) {
+          await RolePermission.bulkCreate(
+            validPerms.map((p) => ({ role_id: role.id, permission_id: p.id })),
+            { transaction, returning: false, ignoreDuplicates: true }
+          );
+        }
+      }
+    }
+
+    const updatedRole = await Role.findByPk(role.id, {
+      include: [{
+        model: Permission,
+        as: 'permissions',
+        through: { attributes: [] },
+        attributes: ['id', 'key', 'label'],
+      }],
+      transaction,
+    });
+
+    return updatedRole;
   });
 
   res.json({ success: true, data: result });
 });
 
 // ── DELETE /api/roles/:id ──────────────────────────────────────────────────────
-// Delete a custom role — must provide reassign_to_id for affected employees
 const deleteRole = asyncWrapper(async (req, res) => {
+  const { id } = req.params;
   const { reassign_to_id } = req.body;
 
-  const role = await Role.findByPk(req.params.id);
-  if (!role) return res.status(404).json({ success: false, message: 'Role not found' });
+  const result = await withTransaction(async (transaction) => {
+    const role = await Role.findByPk(id, { transaction });
 
-  if (role.is_system_role) {
-    return res.status(403).json({ success: false, message: 'System roles cannot be deleted' });
-  }
-  if (!reassign_to_id) {
-    return res.status(400).json({
-      success: false,
-      message: 'reassign_to_id is required — pick a role to move affected employees to',
-    });
-  }
-
-  const reassignTarget = await Role.findByPk(reassign_to_id);
-  if (!reassignTarget) {
-    return res.status(400).json({ success: false, message: 'Reassign target role not found' });
-  }
-
-  // Re assign all employees who had this role in the junction table.
-  // Edge case: if an employee already holds the reassign target role, a plain
-  // UPDATE would create a duplicate PK (employee_id, role_id) and crash.
-  // Fix: for each affected row, update only if the employee doesn't already
-  // have the target; otherwise just delete the redundant row.
-  const affectedRows = await EmployeeRole.findAll({ where: { role_id: role.id } });
-
-  for (const row of affectedRows) {
-    const alreadyHasTarget = await EmployeeRole.findOne({
-      where: { employee_id: row.employee_id, role_id: reassignTarget.id },
-    });
-    if (alreadyHasTarget) {
-      await row.destroy(); // already has the target — just drop the deleted role's row
-    } else {
-      await row.update({ role_id: reassignTarget.id });
+    if (!role) {
+      throw { statusCode: 404, message: 'Role not found' };
     }
-  }
-  const affected = affectedRows.length;
 
-  await role.destroy(); // role_permissions rows cascade-delete via FK ON DELETE CASCADE
+    if (role.is_system_role) {
+      throw { statusCode: 403, message: 'System roles cannot be deleted' };
+    }
+
+    if (!reassign_to_id) {
+      throw {
+        statusCode: 400,
+        message: 'reassign_to_id is required — pick a role to move affected employees to',
+      };
+    }
+
+    const reassignTarget = await Role.findByPk(reassign_to_id, { transaction });
+
+    if (!reassignTarget) {
+      throw { statusCode: 400, message: 'Reassign target role not found' };
+    }
+
+    const affectedRows = await EmployeeRole.findAll({
+      where: { role_id: role.id },
+      transaction,
+    });
+
+    for (const row of affectedRows) {
+      const alreadyHasTarget = await EmployeeRole.findOne({
+        where: { employee_id: row.employee_id, role_id: reassignTarget.id },
+        transaction,
+      });
+
+      if (alreadyHasTarget) {
+        await row.destroy({ transaction });
+      } else {
+        await row.update({ role_id: reassignTarget.id }, { transaction });
+      }
+    }
+
+    const affected = affectedRows.length;
+
+    await role.destroy({ transaction });
+
+    return { roleName: role.name, affectedCount: affected, reassignTargetName: reassignTarget.name };
+  });
 
   logActivity({
     employeeId: req.user.id,
     actionType: 'ROLE_DELETED',
-    actionDescription: `Role "${role.name}" deleted. ${affected} employee(s) reassigned to "${reassignTarget.name}"`,
+    actionDescription: `Role "${result.roleName}" deleted. ${result.affectedCount} employee(s) reassigned to "${result.reassignTargetName}"`,
     req,
   });
 
   res.json({
     success: true,
-    message: `Role "${role.name}" deleted. ${affected} employee(s) reassigned to "${reassignTarget.name}".`,
+    message: `Role "${result.roleName}" deleted. ${result.affectedCount} employee(s) reassigned to "${result.reassignTargetName}".`,
   });
 });
 
 // ── POST /api/roles/assign ─────────────────────────────────────────────────────
-// User Management: assign a role to an employee
-const SYSTEM_ROLE_NAMES = ['admin', 'manager', 'employee']; // must match DB
+const SYSTEM_ROLE_NAMES = ['admin', 'manager', 'employee'];
+
 const assignRole = asyncWrapper(async (req, res) => {
   const { employee_id, role_id } = req.body;
 
@@ -259,75 +347,80 @@ const assignRole = asyncWrapper(async (req, res) => {
     return res.status(400).json({ success: false, message: 'employee_id and role_id are required' });
   }
 
-  const employee = await Employee.scope('withInactive').findByPk(employee_id, {
-    include: [{ model: Role, as: 'roles', through: { attributes: [] } }],
-  });
-  if (!employee) return res.status(404).json({ success: false, message: 'Employee not found' });
+  const result = await withTransaction(async (transaction) => {
+    const employee = await Employee.scope('withInactive').findByPk(employee_id, {
+      include: [{ model: Role, as: 'roles', through: { attributes: [] } }],
+      transaction,
+    });
 
-  const role = await Role.findByPk(role_id);
-  if (!role) return res.status(404).json({ success: false, message: 'Role not found' });
-
-  
-  const previousRoles = employee.roles?.map((r) => r.name) || [];
-  const isIncomingSystemRole = SYSTEM_ROLE_NAMES.includes(role.name.toLowerCase());
-
-  if (isIncomingSystemRole) {
-
-  await employee.setRoles([role], { through: { is_primary: true } });
-  }else{
-    const currentSystemRoles = (employee.roles || []).filter(
-      (r) => SYSTEM_ROLE_NAMES.includes(r.name.toLowerCase())
-    );
-
-       if (currentSystemRoles.length === 0) {
-      // No system role found — just do a straight assignment (shouldn't normally happen)
-      await employee.setRoles([role], { through: { is_primary: true } });
-    } else {
-      // Build the new roles array:
-      //   - Keep all system roles (is_primary: true for the highest one)
-      //   - Add the new custom role (is_primary: false — system role is always primary)
-      const roleAssignments = [
-        // System roles: mark the primary system role as is_primary: true
-        ...currentSystemRoles.map((sr, idx) => ({
-          role:       sr,
-          is_primary: idx === 0, // first system role gets is_primary; rest get false
-        })),
-        // New custom role: always is_primary: false
-        { role, is_primary: false },
-      ];
-
-      // Use EmployeeRole directly to set specific through-table values
-      // Step 1: Remove all current role assignments for this employee
-      await EmployeeRole.destroy({ where: { employee_id: employee.id } });
-
-      // Step 2: Re-insert with correct is_primary values
-      await EmployeeRole.bulkCreate(
-        roleAssignments.map(({ role: r, is_primary }) => ({
-          employee_id: employee.id,
-          role_id:     r.id,
-          is_primary,
-        }))
-      );
+    if (!employee) {
+      throw { statusCode: 404, message: 'Employee not found' };
     }
-  }
+
+    const role = await Role.findByPk(role_id, { transaction });
+    if (!role) {
+      throw { statusCode: 404, message: 'Role not found' };
+    }
+
+    const previousRoles = employee.roles?.map((r) => r.name) || [];
+    const isIncomingSystemRole = SYSTEM_ROLE_NAMES.includes(role.name.toLowerCase());
+
+    if (isIncomingSystemRole) {
+      await employee.setRoles([role], { through: { is_primary: true }, transaction });
+    } else {
+      const currentSystemRoles = (employee.roles || []).filter(
+        (r) => SYSTEM_ROLE_NAMES.includes(r.name.toLowerCase())
+      );
+
+      if (currentSystemRoles.length === 0) {
+        await employee.setRoles([role], { through: { is_primary: true }, transaction });
+      } else {
+        const roleAssignments = [
+          ...currentSystemRoles.map((sr, idx) => ({
+            role:       sr,
+            is_primary: idx === 0,
+          })),
+          { role, is_primary: false },
+        ];
+
+        await EmployeeRole.destroy({ where: { employee_id: employee.id }, transaction });
+
+        await EmployeeRole.bulkCreate(
+          roleAssignments.map(({ role: r, is_primary }) => ({
+            employee_id: employee.id,
+            role_id:     r.id,
+            is_primary,
+          })),
+          { transaction }
+        );
+      }
+    }
+
+    return { employee, role, previousRoles, isIncomingSystemRole };
+  });
+
   logActivity({
     employeeId: req.user.id,
     actionType: 'ROLE_ASSIGNED',
-    actionDescription: `Role "${role.name}" assigned to ${employee.email} by ${req.user.email}`,
+    actionDescription: `Role "${result.role.name}" assigned to ${result.employee.email} by ${req.user.email}`,
     targetType: 'employee',
-    targetId: employee.id,
-    metadata: { previous_roles: previousRoles, new_role: role.name, assignment_type:   isIncomingSystemRole ? 'system_replace' : 'custom_additive', },
+    targetId: result.employee.id,
+    metadata: {
+      previous_roles:  result.previousRoles,
+      new_role:        result.role.name,
+      assignment_type: result.isIncomingSystemRole ? 'system_replace' : 'custom_additive',
+    },
     req,
   });
 
-  const responseMessage = isIncomingSystemRole
-    ? `System role "${role.name}" assigned to ${employee.first_name} ${employee.last_name}. Previous roles replaced.`
-    : `Custom role "${role.name}" added to ${employee.first_name} ${employee.last_name}. System role preserved.`;
+  const responseMessage = result.isIncomingSystemRole
+    ? `System role "${result.role.name}" assigned to ${result.employee.first_name} ${result.employee.last_name}. Previous roles replaced.`
+    : `Custom role "${result.role.name}" added to ${result.employee.first_name} ${result.employee.last_name}. System role preserved.`;
 
   res.json({
     success: true,
     message: responseMessage,
-    note: 'Role change takes effect on the employee\'s next login.',
+    note: "Role change takes effect on the employee's next login.",
   });
 });
 

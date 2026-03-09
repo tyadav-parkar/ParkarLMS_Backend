@@ -1,13 +1,15 @@
 'use strict';
 
 const express = require('express');
-const router = express.Router();
-const { microsoftLogin, microsoftCallback, getMe, logout } = require('../controllers/authController');
+const router  = express.Router();
+const { microsoftLogin, microsoftCallback, refresh, getMe, logout } = require('../controllers/authController');
 const { authMiddleware } = require('../middlewares/authMiddleware');
-// Public routes — no auth required
+
 router.get('/microsoft/login', microsoftLogin);
-router.get('/azure/callback', microsoftCallback);
-// Protected routes — require valid JWT
-router.get('/me', authMiddleware, getMe);
-router.post('/logout', authMiddleware, logout);
+router.get('/azure/callback',  microsoftCallback);
+
+router.post('/refresh', refresh);
+router.get('/me',       authMiddleware, getMe);
+router.post('/logout',  logout);
+
 module.exports = router;
