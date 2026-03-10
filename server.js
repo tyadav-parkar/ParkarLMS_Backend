@@ -10,6 +10,7 @@ const { globalErrorHandler, notFoundHandler, requestIdMiddleware } = require('./
 const { sequelize } = require('./src/config/database');
 const authRoutes    = require('./src/routes/authRoutes');
 const roleRoutes    = require('./src/routes/roleRoutes');
+const userRoutes    = require('./src/routes/userRoutes');
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -79,6 +80,7 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 app.use('/api/auth',  authRoutes);
 app.use('/api/roles', roleRoutes);
+app.use('/api/users', userRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), requestId: req.id });

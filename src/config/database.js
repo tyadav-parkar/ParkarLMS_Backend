@@ -4,22 +4,6 @@ require('dotenv').config();
 
 const { Sequelize } = require('sequelize');
 
-const config = {
-  username: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
-  dialect: 'postgres',
-  logging: process.env.NODE_ENV === 'production' ? false : console.log,
-  pool: {
-    max: 10,
-    min: 0,
-    acquire: 30000,
-    idle: 10000,
-  },
-};
-
 const sequelize = new Sequelize(
   process.env.DB_NAME,
   process.env.DB_USER,
@@ -56,10 +40,12 @@ async function withTransaction(callback) {
     return result;
   } catch (error) {
     await transaction.rollback();
-    console.error('[withTransaction] raw error:', error);
-    console.error('[withTransaction] error name:', error?.name);
-    console.error('[withTransaction] error message:', error?.message);
-    console.error('[withTransaction] error original:', error?.original);
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('[withTransaction] raw error:', error);
+      console.error('[withTransaction] error name:', error?.name);
+      console.error('[withTransaction] error message:', error?.message);
+      console.error('[withTransaction] error original:', error?.original);
+    }
     if (error.statusCode) {
       throw error;
     }
@@ -77,7 +63,7 @@ module.exports = {
   withTransaction,
 };
 
-module.exports.development = config;
-module.exports.test = config;
-module.exports.production = { ...config, logging: false };
-module.exports.default = testConnection;
+// module.exports.development = config;
+// module.exports.test = config;
+// module.exports.production = { ...config, logging: false };
+// module.exports.default = testConnection;

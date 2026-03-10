@@ -9,9 +9,8 @@ const asyncWrapper = require('../utils/asyncWrapper');
 
 const SYSTEM_ROLE_PRIORITY = ['admin', 'manager', 'employee'];
 
-const IS_PROD        = process.env.NODE_ENV === 'production';
-const ACCESS_EXPIRY  = process.env.JWT_EXPIRES_IN        || '15m';
-const REFRESH_EXPIRY = process.env.REFRESH_TOKEN_EXPIRY  || '7d';
+const IS_PROD           = process.env.NODE_ENV === 'production';
+const ACCESS_EXPIRY     = process.env.JWT_EXPIRES_IN || '15m';
 const REFRESH_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 
 function buildRolePayload(roles = []) {
