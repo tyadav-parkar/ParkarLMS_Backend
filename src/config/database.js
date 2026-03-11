@@ -1,27 +1,34 @@
 'use strict';
 
 require('dotenv').config();
-
 const { Sequelize } = require('sequelize');
 
+/* ─────────────────────────────────────────────
+   Base DB config (used by CLI + app)
+───────────────────────────────────────────── */
+const config = {
+  username: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT,
+  dialect: 'postgres',
+  logging: process.env.NODE_ENV === 'production' ? false : console.log,
+};
+
+/* ─────────────────────────────────────────────
+   Sequelize instance for application
+───────────────────────────────────────────── */
 const sequelize = new Sequelize(
-  process.env.DB_NAME,
-  process.env.DB_USER,
-  process.env.DB_PASSWORD,
-  {
-    host: process.env.DB_HOST,
-    port: process.env.DB_PORT,
-    dialect: 'postgres',
-    logging: process.env.NODE_ENV === 'production' ? false : console.log,
-    pool: {
-      max: 10,
-      min: 0,
-      acquire: 30000,
-      idle: 10000,
-    },
-  }
+  config.database,
+  config.username,
+  config.password,
+  config
 );
 
+/* ─────────────────────────────────────────────
+   Connection tester
+───────────────────────────────────────────── */
 async function testConnection() {
   try {
     await sequelize.authenticate();
@@ -32,6 +39,9 @@ async function testConnection() {
   }
 }
 
+/* ─────────────────────────────────────────────
+   Transaction helper
+───────────────────────────────────────────── */
 async function withTransaction(callback) {
   const transaction = await sequelize.transaction();
   try {
@@ -40,15 +50,6 @@ async function withTransaction(callback) {
     return result;
   } catch (error) {
     await transaction.rollback();
-    if (process.env.NODE_ENV !== 'production') {
-      console.error('[withTransaction] raw error:', error);
-      console.error('[withTransaction] error name:', error?.name);
-      console.error('[withTransaction] error message:', error?.message);
-      console.error('[withTransaction] error original:', error?.original);
-    }
-    if (error.statusCode) {
-      throw error;
-    }
     throw {
       statusCode: 500,
       message: error.message || 'Transaction failed',
@@ -56,14 +57,16 @@ async function withTransaction(callback) {
   }
 }
 
+/* ─────────────────────────────────────────────
+   Export for APP + SEQUELIZE CLI
+───────────────────────────────────────────── */
 module.exports = {
   sequelize,
   Sequelize,
   testConnection,
   withTransaction,
-};
 
-// module.exports.development = config;
-// module.exports.test = config;
-// module.exports.production = { ...config, logging: false };
-// module.exports.default = testConnection;
+  development: config,
+  test: config,
+  production: { ...config, logging: false },
+};

@@ -46,14 +46,23 @@ Permission.belongsToMany(Role, {
   otherKey:   'role_id',
   as:         'roles',
 });
+Employee.belongsTo(Employee, {
+  as: 'manager',
+  foreignKey: 'manager_id'
+});
+
+Employee.hasMany(Employee, {
+  as: 'team',
+  foreignKey: 'manager_id'
+});
 
 // ── Department ↔ Employee (1:N) ───────────────────────────────────────────────
 Department.hasMany(Employee, { foreignKey: 'department_id', as: 'employees' });
 Employee.belongsTo(Department, { foreignKey: 'department_id', as: 'department' });
 
 // ── Employee self-reference (manager hierarchy) ───────────────────────────────
-Employee.hasMany(Employee, { foreignKey: 'manager_id', as: 'directReports' });
-Employee.belongsTo(Employee, { foreignKey: 'manager_id', as: 'manager' });
+// Employee.hasMany(Employee, { foreignKey: 'manager_id', as: 'directReports' });
+// Employee.belongsTo(Employee, { foreignKey: 'manager_id', as: 'manager' });
 
 // ── Course ↔ CourseAssignment (1:N) ───────────────────────────────────────────
 Course.hasMany(CourseAssignment, { foreignKey: 'course_id', as: 'assignments' });
@@ -96,6 +105,8 @@ Course.belongsTo(Employee, { foreignKey: 'created_by', as: 'creator' });
 // ── Employee ↔ RefreshToken (1:N) ─────────────────────────────────────────────
 Employee.hasMany(RefreshToken, { foreignKey: 'employee_id', as: 'refreshTokens' });
 RefreshToken.belongsTo(Employee, { foreignKey: 'employee_id', as: 'employee' });
+
+
 
 module.exports = {
   sequelize,
