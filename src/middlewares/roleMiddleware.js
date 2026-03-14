@@ -1,5 +1,32 @@
 'use strict';
 
+const { Employee, Role, Permission } = require('../models');
+
+/**
+ * Fetch current permission keys for an employee directly from the DB.
+ * Returns null if the employee doesn't exist or is inactive.
+ * Called by requirePermission / requireAnyPermission so admin role-permission
+ * changes take effect on the very next API request — no JWT expiry wait.
+ */
+async function getEmployeePermissions(employeeId) {
+  const employee = await Employee.findByPk(employeeId, {
+    include: [{
+      model: Role,
+      as:    'roles',
+      through: { attributes: [] },
+      include: [{
+        model:      Permission,
+        as:         'permissions',
+        through:    { attributes: [] },
+        attributes: ['key'],
+      }],
+    }],
+  });
+
+  if (!employee || !employee.is_active) return null;
+  return employee.roles.flatMap(r => (r.permissions || []).map(p => p.key));
+}
+
 /**
  * requireRole — blocks if the user's role name is not in the allowed list.
  * Usage: router.get('/x', authMiddleware, requireRole('admin'), handler)
@@ -20,15 +47,14 @@ const requireRole = (...allowedRoles) => (req, res, next) => {
 };
 
 /**
- * requirePermission — checks the permissions[] array from the JWT.
- * Zero DB queries — permissions travel with the token.
+ * requirePermission — live DB lookup so permission changes are enforced immediately.
  *
- * Admin bypass: always passes.
- * Everyone else: must have the exact permission key in their JWT permissions[].
+ * Admin bypass: reads system role from JWT (structural, never permission-based).
+ * Everyone else: fetches fresh permission keys from DB on every request.
  *
  * Usage: router.post('/roles', authMiddleware, requirePermission('role_edit'), handler)
  */
-const requirePermission = (permission) => (req, res, next) => {
+const requirePermission = (permission) => async (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ success: false, message: 'Authentication required' });
   }
@@ -36,13 +62,18 @@ const requirePermission = (permission) => (req, res, next) => {
   const roles      = (req.user.roles || [req.user.role]).map(r => r?.toLowerCase());
   const systemRole = req.user.systemRole?.toLowerCase() || null;
 
-  // Admin bypasses all permission checks
+  // Admin bypass — system role is structural, safe to read from JWT
   if (roles.includes('admin') || systemRole === 'admin') return next();
 
-  // Check explicit permission — no system role bypass here.
-  // Manager/employee must have the permission explicitly assigned via a role.
-  const permissions = req.user.permissions || [];
-  if (permissions.includes(permission)) return next();
+  try {
+    const freshPerms = await getEmployeePermissions(req.user.id);
+    if (freshPerms === null) {
+      return res.status(401).json({ success: false, message: 'Account not found or deactivated' });
+    }
+    if (freshPerms.includes(permission)) return next();
+  } catch (err) {
+    return next(err);
+  }
 
   return res.status(403).json({
     success: false,
@@ -53,16 +84,15 @@ const requirePermission = (permission) => (req, res, next) => {
 };
 
 /**
- * requireAnyPermission — passes if the user has AT LEAST ONE of the listed permissions.
- * Use for read/list routes where sidebar shows module for either view OR edit holders.
+ * requireAnyPermission — live DB lookup so permission changes are enforced immediately.
  *
- * Admin bypass: always passes.
- * Everyone else: must have at least one of the listed permission keys.
+ * Admin bypass: reads system role from JWT (structural, never permission-based).
+ * Everyone else: fetches fresh permission keys from DB, passes if has at least one.
  *
  * Usage:
  *   router.get('/', authMiddleware, requireAnyPermission('role_view', 'role_edit'), getRoles);
  */
-const requireAnyPermission = (...permissions) => (req, res, next) => {
+const requireAnyPermission = (...permissions) => async (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ success: false, message: 'Authentication required' });
   }
@@ -70,12 +100,18 @@ const requireAnyPermission = (...permissions) => (req, res, next) => {
   const roles = (req.user.roles || [req.user.role]).map(r => r?.toLowerCase());
   const systemRole = req.user.systemRole?.toLowerCase() || null;
 
-  // Admin bypasses all permission checks
+  // Admin bypass — system role is structural, safe to read from JWT
   if (roles.includes('admin') || systemRole === 'admin') return next();
 
-  // Check if user has at least one of the required permissions
-  const userPerms = req.user.permissions || [];
-  if (permissions.some(p => userPerms.includes(p))) return next();
+  try {
+    const freshPerms = await getEmployeePermissions(req.user.id);
+    if (freshPerms === null) {
+      return res.status(401).json({ success: false, message: 'Account not found or deactivated' });
+    }
+    if (permissions.some(p => freshPerms.includes(p))) return next();
+  } catch (err) {
+    return next(err);
+  }
 
   return res.status(403).json({
     success: false,
