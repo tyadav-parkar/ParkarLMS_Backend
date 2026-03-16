@@ -1,6 +1,6 @@
 'use strict';
 
-const { sequelize } = require('../config/database');
+const { sequelize } = require('../core/config/database');
 
 const Department         = require('./Department');
 const Employee           = require('./Employee');

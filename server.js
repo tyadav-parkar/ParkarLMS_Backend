@@ -6,12 +6,12 @@ const morgan     = require('morgan');
 const rateLimit  = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 
-const { globalErrorHandler, notFoundHandler, requestIdMiddleware } = require('./src/utils/asyncWrapper');
-const { sequelize } = require('./src/config/database');
-const authRoutes    = require('./src/routes/authRoutes');
-const roleRoutes    = require('./src/routes/roleRoutes');
-const userRoutes    = require('./src/routes/userRoutes');
-const teamRoutes = require('./src/routes/teamRoutes');
+const { globalErrorHandler, notFoundHandler, requestIdMiddleware } = require('./src/core/utils/asyncWrapper');
+const { sequelize } = require('./src/core/config/database');
+const authRoutes = require('./src/modules/auth');
+const roleRoutes = require('./src/modules/roles');
+const userRoutes = require('./src/modules/users');
+const teamRoutes = require('./src/modules/team');
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
