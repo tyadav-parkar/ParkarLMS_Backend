@@ -8,15 +8,15 @@ const { logActivity, LOG_ACTIONS } = require('../audit/audit.service');
 
 const SYSTEM_ROLE_PRIORITY = ['admin', 'manager', 'employee'];
 
-const ACCESS_EXPIRY = process.env.JWT_EXPIRES_IN || '15m';
-const ACCESS_EXPIRY_MS = 15 * 60 * 1000;
+const ACCESS_EXPIRY     = process.env.JWT_EXPIRES_IN || '15m';
+const ACCESS_EXPIRY_MS  = 15 * 60 * 1000;
 const REFRESH_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 
 function buildRolePayload(roles = []) {
-	const permSet = new Set();
+	const permSet   = new Set();
 	const roleNames = [];
 	let primaryRole = null;
-	let systemRole = null;
+	let systemRole  = null;
 
 	for (const role of roles) {
 		roleNames.push(role.name);
@@ -41,12 +41,12 @@ function buildRolePayload(roles = []) {
 function generateAccessToken(employee, rolePayload) {
 	return jwt.sign(
 		{
-			id: employee.id,
-			email: employee.email,
-			role: rolePayload.primaryRole,
-			roles: rolePayload.roleNames,
+			id:          employee.id,
+			email:       employee.email,
+			role:        rolePayload.primaryRole,
+			roles:       rolePayload.roleNames,
 			permissions: rolePayload.permissionKeys,
-			systemRole: rolePayload.systemRole,
+			systemRole:  rolePayload.systemRole,
 		},
 		process.env.JWT_SECRET,
 		{ expiresIn: ACCESS_EXPIRY }
@@ -54,15 +54,15 @@ function generateAccessToken(employee, rolePayload) {
 }
 
 async function createRefreshToken(employeeId, req) {
-	const token = crypto.randomBytes(64).toString('hex');
+	const token     = crypto.randomBytes(64).toString('hex');
 	const expiresAt = new Date(Date.now() + REFRESH_EXPIRY_MS);
 
 	await RefreshToken.create({
 		employee_id: employeeId,
 		token,
-		expires_at: expiresAt,
-		ip_address: req.ip,
-		user_agent: req.headers['user-agent'] || null,
+		expires_at:  expiresAt,
+		ip_address:  req.ip,
+		user_agent:  req.headers['user-agent'] || null,
 	});
 
 	return token;
@@ -70,7 +70,6 @@ async function createRefreshToken(employeeId, req) {
 
 function verifyAccessToken(token) {
 	if (!token) return null;
-
 	try {
 		return jwt.verify(token, process.env.JWT_SECRET);
 	} catch {
@@ -83,21 +82,26 @@ async function getEmployeeWithRoles(employeeId) {
 		where: { id: employeeId },
 		include: [
 			{
-				model: Role,
-				as: 'roles',
+				model:   Role,
+				as:      'roles',
 				through: { attributes: ['is_primary'] },
 				include: [{
-					model: Permission,
-					as: 'permissions',
-					through: { attributes: [] },
+					model:      Permission,
+					as:         'permissions',
+					through:    { attributes: [] },
 					attributes: ['key', 'label'],
 				}],
 			},
-			{ model: Department, as: 'department' },
 			{
-				model: Employee.scope('withInactive'),
-				as: 'manager',
+				model:    Department,
+				as:       'department',
+				required: false, // ← LEFT JOIN — null department_id must not block auth
+			},
+			{
+				model:      Employee,
+				as:         'manager',
 				attributes: ['id', 'first_name', 'last_name', 'email'],
+				required:   false, // ← LEFT JOIN — null manager_id must not block auth
 			},
 		],
 	});
@@ -118,7 +122,7 @@ function buildAuthResponse(employee) {
 
 async function getMicrosoftLoginUrl() {
 	return msalClient.getAuthCodeUrl({
-		scopes: SCOPES,
+		scopes:      SCOPES,
 		redirectUri: process.env.AZURE_REDIRECT_URI,
 	});
 }
@@ -130,7 +134,7 @@ async function handleMicrosoftCallback(code, req) {
 
 	const tokenResponse = await msalClient.acquireTokenByCode({
 		code,
-		scopes: SCOPES,
+		scopes:      SCOPES,
 		redirectUri: process.env.AZURE_REDIRECT_URI,
 	});
 
@@ -139,13 +143,13 @@ async function handleMicrosoftCallback(code, req) {
 	const employee = await Employee.scope('withInactive').findOne({
 		where: { email: emailFromAzure },
 		include: [{
-			model: Role,
-			as: 'roles',
+			model:   Role,
+			as:      'roles',
 			through: { attributes: ['is_primary'] },
 			include: [{
-				model: Permission,
-				as: 'permissions',
-				through: { attributes: [] },
+				model:      Permission,
+				as:         'permissions',
+				through:    { attributes: [] },
 				attributes: ['key'],
 			}],
 		}],
@@ -161,13 +165,13 @@ async function handleMicrosoftCallback(code, req) {
 
 	await employee.update({ last_login: new Date() });
 
-	const rolePayload = buildRolePayload(employee.roles || []);
-	const accessToken = generateAccessToken(employee, rolePayload);
+	const rolePayload  = buildRolePayload(employee.roles || []);
+	const accessToken  = generateAccessToken(employee, rolePayload);
 	const refreshToken = await createRefreshToken(employee.id, req);
 
 	logActivity({
-		employeeId: employee.id,
-		actionType: LOG_ACTIONS.LOGIN,
+		employeeId:        employee.id,
+		actionType:        LOG_ACTIONS.LOGIN,
 		actionDescription: `${employee.email} logged in via Azure AD`,
 		req,
 	});
@@ -191,32 +195,24 @@ async function refreshAuthSession(incomingToken, req) {
 
 	if (stored.is_revoked) {
 		await RefreshToken.destroy({ where: { employee_id: stored.employee_id } });
-		return {
-			status: 401,
-			clearCookies: true,
-			body: { success: false, message: 'Refresh token reuse detected' },
-		};
+		return { status: 401, clearCookies: true, body: { success: false, message: 'Refresh token reuse detected' } };
 	}
 
 	if (new Date() > stored.expires_at) {
 		await stored.destroy();
-		return {
-			status: 401,
-			clearCookies: true,
-			body: { success: false, message: 'Refresh token expired' },
-		};
+		return { status: 401, clearCookies: true, body: { success: false, message: 'Refresh token expired' } };
 	}
 
 	const employee = await Employee.scope('withInactive').findOne({
 		where: { id: stored.employee_id },
 		include: [{
-			model: Role,
-			as: 'roles',
+			model:   Role,
+			as:      'roles',
 			through: { attributes: ['is_primary'] },
 			include: [{
-				model: Permission,
-				as: 'permissions',
-				through: { attributes: [] },
+				model:      Permission,
+				as:         'permissions',
+				through:    { attributes: [] },
 				attributes: ['key'],
 			}],
 		}],
@@ -224,24 +220,15 @@ async function refreshAuthSession(incomingToken, req) {
 
 	if (!employee || !employee.is_active) {
 		await stored.destroy();
-		return {
-			status: 401,
-			clearCookies: true,
-			body: { success: false, message: 'Account not found or deactivated' },
-		};
+		return { status: 401, clearCookies: true, body: { success: false, message: 'Account not found or deactivated' } };
 	}
 
 	await stored.update({ is_revoked: true });
 	const newRefreshToken = await createRefreshToken(employee.id, req);
-	const rolePayload = buildRolePayload(employee.roles || []);
-	const accessToken = generateAccessToken(employee, rolePayload);
+	const rolePayload     = buildRolePayload(employee.roles || []);
+	const accessToken     = generateAccessToken(employee, rolePayload);
 
-	return {
-		status: 200,
-		accessToken,
-		refreshToken: newRefreshToken,
-		body: { success: true },
-	};
+	return { status: 200, accessToken, refreshToken: newRefreshToken, body: { success: true } };
 }
 
 async function getSessionStatus(accessTokenCookie, refreshTokenCookie, req) {
@@ -252,19 +239,10 @@ async function getSessionStatus(accessTokenCookie, refreshTokenCookie, req) {
 		if (employee && employee.is_active) {
 			const rolePayload = buildRolePayload(employee.roles || []);
 			const accessToken = generateAccessToken(employee, rolePayload);
-			const payload = buildAuthResponse(employee);
-			return {
-				status: 200,
-				accessToken,
-				body: { success: true, authenticated: true, ...payload },
-			};
+			const payload     = buildAuthResponse(employee);
+			return { status: 200, accessToken, body: { success: true, authenticated: true, ...payload } };
 		}
-
-		return {
-			status: 200,
-			clearCookies: true,
-			body: { success: true, authenticated: false },
-		};
+		return { status: 200, clearCookies: true, body: { success: true, authenticated: false } };
 	}
 
 	if (!refreshTokenCookie) {
@@ -273,53 +251,32 @@ async function getSessionStatus(accessTokenCookie, refreshTokenCookie, req) {
 
 	const stored = await RefreshToken.findOne({ where: { token: refreshTokenCookie } });
 	if (!stored) {
-		return {
-			status: 200,
-			clearCookies: true,
-			body: { success: true, authenticated: false },
-		};
+		return { status: 200, clearCookies: true, body: { success: true, authenticated: false } };
 	}
 
 	if (stored.is_revoked) {
 		await RefreshToken.destroy({ where: { employee_id: stored.employee_id } });
-		return {
-			status: 200,
-			clearCookies: true,
-			body: { success: true, authenticated: false },
-		};
+		return { status: 200, clearCookies: true, body: { success: true, authenticated: false } };
 	}
 
 	if (new Date() > stored.expires_at) {
 		await stored.destroy();
-		return {
-			status: 200,
-			clearCookies: true,
-			body: { success: true, authenticated: false },
-		};
+		return { status: 200, clearCookies: true, body: { success: true, authenticated: false } };
 	}
 
 	const employee = await getEmployeeWithRoles(stored.employee_id);
 	if (!employee || !employee.is_active) {
 		await stored.destroy();
-		return {
-			status: 200,
-			clearCookies: true,
-			body: { success: true, authenticated: false },
-		};
+		return { status: 200, clearCookies: true, body: { success: true, authenticated: false } };
 	}
 
 	await stored.update({ is_revoked: true });
 	const newRefreshToken = await createRefreshToken(employee.id, req);
-	const rolePayload = buildRolePayload(employee.roles || []);
-	const accessToken = generateAccessToken(employee, rolePayload);
-	const payload = buildAuthResponse(employee);
+	const rolePayload     = buildRolePayload(employee.roles || []);
+	const accessToken     = generateAccessToken(employee, rolePayload);
+	const payload         = buildAuthResponse(employee);
 
-	return {
-		status: 200,
-		accessToken,
-		refreshToken: newRefreshToken,
-		body: { success: true, authenticated: true, ...payload },
-	};
+	return { status: 200, accessToken, refreshToken: newRefreshToken, body: { success: true, authenticated: true, ...payload } };
 }
 
 async function getMe(userId) {
@@ -328,7 +285,6 @@ async function getMe(userId) {
 	if (!employee) {
 		return { status: 401, body: { success: false, message: 'Account not found' } };
 	}
-
 	if (!employee.is_active) {
 		return { status: 401, body: { success: false, message: 'Account deactivated' } };
 	}
@@ -338,20 +294,17 @@ async function getMe(userId) {
 }
 
 async function logout(incomingToken, user, req) {
-	if (incomingToken) {
-		await RefreshToken.destroy({ where: { token: incomingToken } });
-	}
-
+	let destroyedCount = 0;
 	if (user) {
+		destroyedCount = await RefreshToken.destroy({ where: { employee_id: user.id } });
 		logActivity({
-			employeeId: user.id,
-			actionType: LOG_ACTIONS.LOGOUT,
-			actionDescription: `${user.email} logged out`,
+			employeeId:        user.id,
+			actionType:        LOG_ACTIONS.LOGOUT,
+			actionDescription: `${user.email} logged out (destroyed ${destroyedCount} refresh tokens)`,
 			req,
 		});
 	}
-
-	return { status: 200, clearCookies: true, body: { success: true } };
+	return { status: 200, clearCookies: true, body: { success: true, message: `Logged out. Cleared ${destroyedCount} refresh tokens.` } };
 }
 
 module.exports = {

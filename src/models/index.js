@@ -18,6 +18,7 @@ const ActivityLog        = require('./ActivityLog');
 const ErrorLog           = require('./ErrorLog');
 const SchedulerLog       = require('./SchedulerLog');
 const RefreshToken       = require('./RefreshToken');
+const ImportLog = require('../modules/import/importLog.model');
 
 // ── Employee ↔ Role (M2M via employee_roles) ─────────────────────────────────
 Employee.belongsToMany(Role, {
@@ -106,6 +107,10 @@ Course.belongsTo(Employee, { foreignKey: 'created_by', as: 'creator' });
 Employee.hasMany(RefreshToken, { foreignKey: 'employee_id', as: 'refreshTokens' });
 RefreshToken.belongsTo(Employee, { foreignKey: 'employee_id', as: 'employee' });
 
+// ImportLog ↔ Employee (who uploaded)         ← NEW
+ImportLog.belongsTo(Employee, { foreignKey: 'uploaded_by', as: 'uploader'   });
+Employee.hasMany(ImportLog,   { foreignKey: 'uploaded_by', as: 'importLogs' });
+ 
 
 
 module.exports = {
@@ -126,4 +131,5 @@ module.exports = {
   ErrorLog,
   SchedulerLog,
   RefreshToken,
+  ImportLog,
 };

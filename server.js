@@ -12,6 +12,7 @@ const authRoutes = require('./src/modules/auth');
 const roleRoutes = require('./src/modules/roles');
 const userRoutes = require('./src/modules/users');
 const teamRoutes = require('./src/modules/team');
+const importRoutes = require('./src/modules/import'); 
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -83,6 +84,7 @@ app.use('/api/auth',  authRoutes);
 app.use('/api/roles', roleRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/team', teamRoutes);
+app.use('/api/import', importRoutes);
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), requestId: req.id });
 });
