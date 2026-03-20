@@ -53,26 +53,26 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-const apiLimiter = rateLimit({
-  windowMs:       15 * 60 * 1000,
-  max:            parseInt(process.env.RATE_LIMIT_MAX) || 100,
-  message:        { success: false, message: 'Too many requests from this IP, please try again after 15 minutes' },
-  standardHeaders: true,
-  legacyHeaders:  false,
-  skip:           (req) => ['/health', '/health/ready', '/health/live'].includes(req.path),
-});
+// const apiLimiter = rateLimit({
+//   windowMs:       15 * 60 * 1000,
+//   max:            parseInt(process.env.RATE_LIMIT_MAX) || 100,
+//   message:        { success: false, message: 'Too many requests from this IP, please try again after 15 minutes' },
+//   standardHeaders: true,
+//   legacyHeaders:  false,
+//   skip:           (req) => ['/health', '/health/ready', '/health/live'].includes(req.path),
+// });
 
-const authLimiter = rateLimit({
-  windowMs:              15 * 60 * 1000,
-  max:                   5,
-  skipSuccessfulRequests: true,
-  message:               { success: false, message: 'Too many authentication attempts, please try again after 15 minutes' },
-  standardHeaders:       true,
-  legacyHeaders:         false,
-});
+// const authLimiter = rateLimit({
+//   windowMs:              15 * 60 * 1000,
+//   max:                   5,
+//   skipSuccessfulRequests: true,
+//   message:               { success: false, message: 'Too many authentication attempts, please try again after 15 minutes' },
+//   standardHeaders:       true,
+//   legacyHeaders:         false,
+// });
 
-app.use('/api/',      apiLimiter);
-app.use('/api/auth/', authLimiter);
+// app.use('/api/',      apiLimiter);
+// app.use('/api/auth/', authLimiter);
 
 app.use(cookieParser());
 app.use(express.json({ limit: '10kb', strict: true }));

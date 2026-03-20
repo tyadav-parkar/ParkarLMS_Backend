@@ -1,8 +1,8 @@
 'use strict';
-
+ 
 require('dotenv').config();
 const { Sequelize } = require('sequelize');
-
+ 
 /* Base DB config (used by CLI + app) */
 const config = {
   username: process.env.DB_USER,
@@ -13,7 +13,7 @@ const config = {
   dialect: 'postgres',
   logging: process.env.NODE_ENV === 'production' ? false : console.log,
 };
-
+ 
 /* Sequelize instance for application */
 const sequelize = new Sequelize(
   config.database,
@@ -21,7 +21,7 @@ const sequelize = new Sequelize(
   config.password,
   config
 );
-
+ 
 /* Connection tester */
 async function testConnection() {
   try {
@@ -32,7 +32,7 @@ async function testConnection() {
     throw error;
   }
 }
-
+ 
 /* Transaction helper */
 async function withTransaction(callback) {
   const transaction = await sequelize.transaction();
@@ -42,20 +42,46 @@ async function withTransaction(callback) {
     return result;
   } catch (error) {
     await transaction.rollback();
-    throw {
-      statusCode: 500,
-      message: error.message || 'Transaction failed',
-    };
+ 
+    // Preserve already-operational errors from services/controllers.
+    if (error?.isOperational) {
+      throw error;
+    }
+ 
+    // Service layers sometimes throw plain objects with statusCode/message.
+    // Convert them into operational errors so globalErrorHandler keeps 4xx status.
+    if (error?.statusCode) {
+      const mappedErrorCodeByStatus = {
+        400: 'VALIDATION_ERROR',
+        401: 'UNAUTHORIZED',
+        403: 'FORBIDDEN',
+        404: 'NOT_FOUND',
+        409: 'CONFLICT_ERROR',
+      };
+ 
+      const normalizedError = new Error(error.message || 'Operation failed');
+      normalizedError.statusCode = error.statusCode;
+      normalizedError.errorCode = error.errorCode || mappedErrorCodeByStatus[error.statusCode] || 'INTERNAL_ERROR';
+      normalizedError.isOperational = true;
+      throw normalizedError;
+    }
+ 
+    const fallbackError = new Error(error?.message || 'Transaction failed');
+    fallbackError.statusCode = 500;
+    fallbackError.errorCode = 'INTERNAL_ERROR';
+    fallbackError.isOperational = true;
+    throw fallbackError;
   }
 }
-
+ 
 module.exports = {
   sequelize,
   Sequelize,
   testConnection,
   withTransaction,
-
+ 
   development: config,
   test: config,
   production: { ...config, logging: false },
 };
+ 
