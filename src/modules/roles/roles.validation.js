@@ -23,13 +23,7 @@ const roleBodySchema = Joi.object({
 const createRoleSchema = roleBodySchema.fork(['name'], (s) => s.required());
 const updateRoleSchema = roleBodySchema;
 
-const deleteRoleBodySchema = Joi.object({
-	reassign_to_id: Joi.number().integer().positive().required()
-		.messages({
-			'number.base': 'Reassign ID must be a number',
-			'any.required': 'reassign_to_id is required when deleting a role',
-		}),
-});
+
 
 const rolePaginationSchema = Joi.object({
 	page: Joi.number().integer().min(1).default(1),
@@ -45,7 +39,6 @@ const validateUpdateRole = [
 
 const validateDeleteRole = [
 	validateParams(roleIdSchema),
-	validateBody(deleteRoleBodySchema),
 ];
 
 const validateGetRoles = validateQuery(rolePaginationSchema);
@@ -59,6 +52,6 @@ module.exports = {
 	roleBodySchema,
 	createRoleSchema,
 	updateRoleSchema,
-	deleteRoleBodySchema,
+
 	rolePaginationSchema,
 };

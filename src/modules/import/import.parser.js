@@ -45,13 +45,8 @@ const HEADER_MAP = {
   'reports to email':         'reports_to_email',
 };
 
-/**
- * Scan the first N rows of aoa to find which one contains "employee number".
- * Returns the 0-based index of the header row, or -1 if not found.
- */
-function detectHeaderRowIndex(aoa, scanRows = 10) {
-  const limit = Math.min(scanRows, aoa.length);
-  for (let i = 0; i < limit; i++) {
+function detectHeaderRowIndex(aoa) {
+  for (let i = 0; i < aoa.length; i++) {
     const row = aoa[i];
     for (const cell of row) {
       const normalised = String(cell || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -92,16 +87,13 @@ function parseExcel(buffer, { maxRows = 500 } = {}) {
     );
   }
 
-  // ── Auto-detect header row ────────────────────────────────────────────────
-  // Scans first 10 rows for "Employee Number" column.
-  // Works for both the formatted template (headers on row 3) and a plain
-  // Excel where headers are on row 1.
+ 
   const headerRowIdx = detectHeaderRowIndex(aoa);
 
   if (headerRowIdx === -1) {
     throw Object.assign(
       new Error(
-        'Could not find "Employee Number" column in the first 10 rows. ' +
+        'Could not find "Employee Number" column in rows. ' +
         'Ensure the file has the correct column headers.'
       ),
       { statusCode: 422 }

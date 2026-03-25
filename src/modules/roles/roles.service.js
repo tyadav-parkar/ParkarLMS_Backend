@@ -193,7 +193,7 @@ async function updateRole(id, body, actor, req) {
 	return { status: 200, body: { success: true, data: result } };
 }
 
-async function deleteRole(id, reassignToId, actor, req) {
+async function deleteRole(id, actor, req) {
 	const result = await withTransaction(async (transaction) => {
 		const role = await Role.findByPk(id, { transaction });
 		if (!role) {
@@ -204,46 +204,21 @@ async function deleteRole(id, reassignToId, actor, req) {
 			throw { statusCode: 403, message: 'System roles cannot be deleted' };
 		}
 
-		if (!reassignToId) {
-			throw {
-				statusCode: 400,
-				message: 'reassign_to_id is required — pick a role to move affected employees to',
-			};
-		}
-
-		const reassignTarget = await Role.findByPk(reassignToId, { transaction });
-		if (!reassignTarget) {
-			throw { statusCode: 400, message: 'Reassign target role not found' };
-		}
-
-		const affectedRows = await EmployeeRole.findAll({ where: { role_id: role.id }, transaction });
-		for (const row of affectedRows) {
-			const alreadyHasTarget = await EmployeeRole.findOne({
-				where: { employee_id: row.employee_id, role_id: reassignTarget.id },
-				transaction,
-			});
-
-			if (alreadyHasTarget) {
-				await row.destroy({ transaction });
-			} else {
-				await row.update({ role_id: reassignTarget.id }, { transaction });
-			}
-		}
-
-		const affectedCount = affectedRows.length;
+		const affectedCount = await EmployeeRole.destroy({ where: { role_id: role.id }, transaction });
+		await RolePermission.destroy({ where: { role_id: role.id }, transaction });
 		await role.destroy({ transaction });
 
 		return {
 			roleName: role.name,
 			affectedCount,
-			reassignTargetName: reassignTarget.name,
 		};
+
 	});
 
 	logActivity({
 		employeeId: actor.id,
 		actionType: LOG_ACTIONS.ROLE_DELETED,
-		actionDescription: `Role "${result.roleName}" deleted. ${result.affectedCount} employee(s) reassigned to "${result.reassignTargetName}"`,
+		actionDescription: `Role "${result.roleName}" deleted. ${result.affectedCount} assignments removed`,
 		req,
 	});
 
@@ -251,7 +226,7 @@ async function deleteRole(id, reassignToId, actor, req) {
 		status: 200,
 		body: {
 			success: true,
-			message: `Role "${result.roleName}" deleted. ${result.affectedCount} employee(s) reassigned to "${result.reassignTargetName}".`,
+			message: `Role "${result.roleName}" deleted. ${result.affectedCount} assignments removed.`,
 		},
 	};
 }
