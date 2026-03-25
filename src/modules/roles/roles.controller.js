@@ -34,7 +34,7 @@ const updateRole = asyncWrapper(async (req, res) => {
 });
 
 const deleteRole = asyncWrapper(async (req, res) => {
-	const result = await rolesService.deleteRole(req.params.id, req.body.reassign_to_id, req.user, req);
+	const result = await rolesService.deleteRole(req.params.id, req.user, req);
 	res.status(result.status).json(result.body);
 });
 
