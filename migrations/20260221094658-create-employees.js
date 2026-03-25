@@ -1,13 +1,15 @@
 'use strict';
 
+/**
+ * Creates the employees table.
+ * role_id is a nullable FK to roles (roles table exists at migration 094654).
+ * It is left nullable at DB level so migrations can run without seeded data;
+ * the Sequelize model enforces allowNull:false at the application layer.
+ */
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    // Create the ENUM type for 'role' before creating the table
-    await queryInterface.sequelize.query(
-      `CREATE TYPE "enum_employees_role" AS ENUM ('admin', 'manager', 'employee');`
-    );
-
     await queryInterface.createTable('employees', {
       id: {
         type: Sequelize.INTEGER,
@@ -61,10 +63,15 @@ module.exports = {
         type: Sequelize.STRING(50),
         allowNull: true,  // e.g. GTE, L1, L2
       },
-      role: {
-        type: Sequelize.ENUM('admin', 'manager', 'employee'),
-        allowNull: false,
-        defaultValue: 'employee',
+      role_id: {
+        type: Sequelize.INTEGER,
+        allowNull: true,  // nullable at DB level; enforced NOT NULL by Sequelize model
+        references: {
+          model: 'roles',
+          key: 'id',
+        },
+        onUpdate: 'CASCADE',
+        onDelete: 'RESTRICT',
       },
       is_active: {
         type: Sequelize.BOOLEAN,
@@ -92,11 +99,7 @@ module.exports = {
     });
   },
 
-  async down(queryInterface, Sequelize) {
-    // Drop the table first, then drop the ENUM type
+  async down(queryInterface) {
     await queryInterface.dropTable('employees');
-    await queryInterface.sequelize.query(
-      `DROP TYPE IF EXISTS "enum_employees_role";`
-    );
   },
 };

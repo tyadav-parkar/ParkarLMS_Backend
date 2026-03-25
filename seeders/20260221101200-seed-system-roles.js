@@ -2,94 +2,37 @@
 
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
-  async up(queryInterface, Sequelize) {
+  async up(queryInterface) {
     const now = new Date();
-
+    // NOTE: No 'permissions' column — that moved to the role_permissions junction table.
     await queryInterface.bulkInsert('roles', [
       {
-        name: 'admin',
-        description: 'Full access to all features',
-        permissions: JSON.stringify({
-          view_dashboard: true,
-          view_own_courses: true,
-          mark_course_complete: true,
-          view_own_certificates: true,
-          view_own_career_path: true,
-          view_team: true,
-          assign_courses_team: true,
-          view_team_certificates: true,
-          view_team_analytics: true,
-          manage_courses: true,
-          manage_employees: true,
-          trigger_sync: true,
-          view_org_analytics: true,
-          manage_roles: true,
-          view_logs: true,
-          configure_scheduler: true,
-          export_reports: true,
-        }),
+        name:           'admin',
+        description:    'Full access to all features',
         is_system_role: true,
-        created_at: now,
-        updated_at: now,
+        created_at:     now,
+        updated_at:     now,
       },
       {
-        name: 'manager',
-        description: 'Team management and course assignment',
-        permissions: JSON.stringify({
-          view_dashboard: true,
-          view_own_courses: true,
-          mark_course_complete: true,
-          view_own_certificates: true,
-          view_own_career_path: true,
-          view_team: true,
-          assign_courses_team: true,
-          view_team_certificates: true,
-          view_team_analytics: true,
-          manage_courses: false,
-          manage_employees: false,
-          trigger_sync: false,
-          view_org_analytics: false,
-          manage_roles: false,
-          view_logs: false,
-          configure_scheduler: false,
-          export_reports: true,
-        }),
+        name:           'manager',
+        description:    'Team management and course assignment',
         is_system_role: true,
-        created_at: now,
-        updated_at: now,
+        created_at:     now,
+        updated_at:     now,
       },
       {
-        name: 'employee',
-        description: 'Self-access only — view own data',
-        permissions: JSON.stringify({
-          view_dashboard: true,
-          view_own_courses: true,
-          mark_course_complete: true,
-          view_own_certificates: true,
-          view_own_career_path: true,
-          view_team: false,
-          assign_courses_team: false,
-          view_team_certificates: false,
-          view_team_analytics: false,
-          manage_courses: false,
-          manage_employees: false,
-          trigger_sync: false,
-          view_org_analytics: false,
-          manage_roles: false,
-          view_logs: false,
-          configure_scheduler: false,
-          export_reports: false,
-        }),
+        name:           'employee',
+        description:    'Self-access only — view own data',
         is_system_role: true,
-        created_at: now,
-        updated_at: now,
+        created_at:     now,
+        updated_at:     now,
       },
-    ]);
+    ], { ignoreDuplicates: true });
   },
 
-  async down(queryInterface, Sequelize) {
+  async down(queryInterface) {
     await queryInterface.bulkDelete('roles', {
       name: ['admin', 'manager', 'employee'],
-    });
+    }, {});
   },
 };

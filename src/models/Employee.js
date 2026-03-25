@@ -1,7 +1,7 @@
 'use strict';
 
 const { DataTypes } = require('sequelize');
-const { sequelize } = require('../config/database');
+const { sequelize } = require('../core/config/database');
 
 const Employee = sequelize.define(
   'Employee',
@@ -46,11 +46,7 @@ const Employee = sequelize.define(
       type: DataTypes.STRING(50),
       allowNull: true,
     },
-    role: {
-      type: DataTypes.ENUM('admin', 'manager', 'employee'),
-      defaultValue: 'employee',
-      allowNull: false,
-    },
+    // role_id removed — Employee ↔ Role is now M2M via employee_roles junction table
     is_active: {
       type: DataTypes.BOOLEAN,
       defaultValue: true,

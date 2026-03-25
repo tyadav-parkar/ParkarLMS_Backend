@@ -1,7 +1,7 @@
 'use strict';
 
 const { DataTypes } = require('sequelize');
-const { sequelize } = require('../config/database');
+const { sequelize } = require('../core/config/database');
 
 const Role = sequelize.define(
   'Role',
@@ -20,11 +20,6 @@ const Role = sequelize.define(
     description: {
       type: DataTypes.TEXT,
       allowNull: true,
-    },
-    permissions: {
-      type: DataTypes.JSONB,
-      allowNull: false,
-      defaultValue: {},
     },
     is_system_role: {
       type: DataTypes.BOOLEAN,
