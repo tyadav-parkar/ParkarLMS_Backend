@@ -2,6 +2,7 @@
  
 require('dotenv').config();
 const { Sequelize } = require('sequelize');
+const normalizeError = require('../errors/normalizeError');
  
 /* Base DB config (used by CLI + app) */
 const config = {
@@ -42,35 +43,7 @@ async function withTransaction(callback) {
     return result;
   } catch (error) {
     await transaction.rollback();
- 
-    // Preserve already-operational errors from services/controllers.
-    if (error?.isOperational) {
-      throw error;
-    }
- 
-    // Service layers sometimes throw plain objects with statusCode/message.
-    // Convert them into operational errors so globalErrorHandler keeps 4xx status.
-    if (error?.statusCode) {
-      const mappedErrorCodeByStatus = {
-        400: 'VALIDATION_ERROR',
-        401: 'UNAUTHORIZED',
-        403: 'FORBIDDEN',
-        404: 'NOT_FOUND',
-        409: 'CONFLICT_ERROR',
-      };
- 
-      const normalizedError = new Error(error.message || 'Operation failed');
-      normalizedError.statusCode = error.statusCode;
-      normalizedError.errorCode = error.errorCode || mappedErrorCodeByStatus[error.statusCode] || 'INTERNAL_ERROR';
-      normalizedError.isOperational = true;
-      throw normalizedError;
-    }
- 
-    const fallbackError = new Error(error?.message || 'Transaction failed');
-    fallbackError.statusCode = 500;
-    fallbackError.errorCode = 'INTERNAL_ERROR';
-    fallbackError.isOperational = true;
-    throw fallbackError;
+    throw normalizeError(error);
   }
 }
  

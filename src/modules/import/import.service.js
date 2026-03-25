@@ -21,11 +21,14 @@
  */
 
 const { QueryTypes }  = require('sequelize');
-const { sequelize }   = require('../../core/config/database');
+const { sequelize, withTransaction }   = require('../../core/config/database');
 const Employee        = require('../../models/Employee');
 const Department      = require('../../models/Department');
 const Role            = require('../../models/Role');
 const EmployeeRole    = require('../../models/EmployeeRole');
+const logger          = require('../../core/utils/logger');
+
+const OPERATION = 'EMPLOYEE_IMPORT';
 
 // ── Department helpers ────────────────────────────────────────────────────────
 
@@ -88,22 +91,22 @@ async function getSystemRoleIds(t) {
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-async function processRows(validRows) {
-  const deptNameCache     = new Map();
-  let   inserted          = 0;
-  let   updated           = 0;
-  let   softDeleted       = 0;
-  const softDeletedEmps   = [];
-  const promotedToManager = [];
-  const demotedToEmployee = [];
-  const managerWarnings   = [];
+async function processRows(validRows, { loggerContext = {} } = {}) {
+  const context = { ...loggerContext, operation: OPERATION };
+  const summary = await withTransaction(async (t) => {
+    const deptNameCache     = new Map();
+    let   inserted          = 0;
+    let   updated           = 0;
+    let   softDeleted       = 0;
+    const softDeletedEmps   = [];
+    const promotedToManager = [];
+    const demotedToEmployee = [];
+    const managerWarnings   = [];
 
-  await sequelize.transaction(async (t) => {
-
-    // ── Pass 1: system role ids ───────────────────────────────────────────────
+    logger.info('Import pass 1: Fetching system roles', { ...context, step: 'pass1_system_roles' });
     const systemRoleIds = await getSystemRoleIds(t);
 
-    // ── Pass 2: load all employees + departments into memory ──────────────────
+    logger.info('Import pass 2: Loading employees/departments', { ...context, step: 'pass2_preload' });
     const existingEmployees = await Employee.scope('withInactive').findAll({
       attributes:  ['id', 'employee_number', 'email', 'is_active'],
       transaction: t,
@@ -119,8 +122,6 @@ async function processRows(validRows) {
       existingEmployees.map((e) => [e.email.toLowerCase(), { id: e.id }])
     );
 
-    // Fetch admin employee ids using QueryTypes.SELECT so Postgres returns
-    // plain rows without metadata — avoids column name casing issues
     const adminRows = await sequelize.query(
       `SELECT er.employee_id
        FROM   employee_roles er
@@ -133,7 +134,6 @@ async function processRows(validRows) {
     );
     const adminEmployeeIds = new Set(adminRows.map((r) => r.employee_id));
 
-    // Pre-load dept cache — use unscoped findAll to get all depts including inactive
     const existingDepts = await Department.unscoped().findAll({
       attributes:  ['id', 'name', 'code'],
       transaction: t,
@@ -144,10 +144,9 @@ async function processRows(validRows) {
       deptNameCache.set(d.name.trim().toLowerCase(), d.id);
     });
 
-    // Set of emp#s in this file — used in Pass 5
     const fileEmpNums = new Set(validRows.map((r) => r.employee_number.toUpperCase()));
 
-    // ── Pass 3: upsert employees ──────────────────────────────────────────────
+    logger.info('Import pass 3: Upserting employees', { ...context, step: 'pass3_upsert' });
     for (const row of validRows) {
       const empNum = row.employee_number.toUpperCase();
       const email  = row.email.toLowerCase();
@@ -190,7 +189,7 @@ async function processRows(validRows) {
       }
     }
 
-    // ── Pass 4: manager_id resolution (string emp# → integer FK) ─────────────
+    logger.info('Import pass 4: Resolving managers', { ...context, step: 'pass4_manager_resolution' });
     for (const row of validRows) {
       const empNum = row.employee_number.toUpperCase();
       const emp    = empByNum.get(empNum);
@@ -237,11 +236,11 @@ async function processRows(validRows) {
       );
     }
 
-    // ── Pass 5: soft delete employees absent from this file ───────────────────
+    logger.info('Import pass 5: Soft deleting missing employees', { ...context, step: 'pass5_soft_delete' });
     for (const [empNum, emp] of empByNum.entries()) {
       if (!emp.is_active)               continue;
       if (fileEmpNums.has(empNum))      continue;
-      if (adminEmployeeIds.has(emp.id)) continue; // ADMIN GUARD
+      if (adminEmployeeIds.has(emp.id)) continue;
 
       await Employee.scope('withInactive').update(
         { is_active: false },
@@ -251,9 +250,7 @@ async function processRows(validRows) {
       softDeletedEmps.push(empNum);
     }
 
-    // ── Pass 6: system role re-evaluation (employee ↔ manager) ───────────────
-    // employee_roles uses a composite PK (employee_id, role_id) — no id column.
-    // Updates use WHERE employee_id + role_id, never WHERE id.
+    logger.info('Import pass 6: Re-evaluating system roles', { ...context, step: 'pass6_role_sync' });
     const managerRows = await sequelize.query(
       `SELECT DISTINCT manager_id
        FROM   employees
@@ -263,22 +260,18 @@ async function processRows(validRows) {
     );
     const currentManagerIds = new Set(managerRows.map((r) => r.manager_id));
 
-    // Fetch only employee + manager system role rows — admin excluded by WHERE
     const systemRoleRows = await EmployeeRole.findAll({
       where:       { role_id: [systemRoleIds.employee, systemRoleIds.manager] },
-      attributes:  ['employee_id', 'role_id'],   // no id — composite PK table
+      attributes:  ['employee_id', 'role_id'],
       transaction: t,
     });
 
     for (const er of systemRoleRows) {
-      if (adminEmployeeIds.has(er.employee_id)) continue; // admin guard
+      if (adminEmployeeIds.has(er.employee_id)) continue;
 
       const shouldBeManager = currentManagerIds.has(er.employee_id);
 
       if (shouldBeManager && er.role_id !== systemRoleIds.manager) {
-        // Promote: employee → manager
-        // Raw query used because EmployeeRole has composite PK (no id column)
-        // and Sequelize's model.update() is unreliable on composite PK tables
         await sequelize.query(
           `UPDATE employee_roles
            SET    role_id = :newRoleId
@@ -298,7 +291,6 @@ async function processRows(validRows) {
         if (emp) promotedToManager.push(emp.employee_number);
 
       } else if (!shouldBeManager && er.role_id !== systemRoleIds.employee) {
-        // Demote: manager → employee
         await sequelize.query(
           `UPDATE employee_roles
            SET    role_id = :newRoleId
@@ -319,17 +311,27 @@ async function processRows(validRows) {
       }
     }
 
-  }); // ← transaction commits here
+    logger.info('Import passes completed', {
+      ...context,
+      step: 'transaction_summary',
+      inserted,
+      updated,
+      softDeleted,
+    });
 
-  return {
-    inserted,
-    updated,
-    softDeleted,
-    softDeletedEmps,
-    promotedToManager,
-    demotedToEmployee,
-    managerWarnings,
-  };
+    return {
+      inserted,
+      updated,
+      softDeleted,
+      softDeletedEmps,
+      promotedToManager,
+      demotedToEmployee,
+      managerWarnings,
+    };
+  });
+
+  logger.info('Import transaction committed', { ...context, inserted: summary.inserted, updated: summary.updated });
+  return summary;
 }
 
 module.exports = { processRows };

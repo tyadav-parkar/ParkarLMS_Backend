@@ -18,6 +18,8 @@ const router  = express.Router();
 
 const { authMiddleware }                   = require('../../core/middlewares/authMiddleware');
 const { importEmployees, getImportLogs }   = require('./import.controller');
+const { AppError }                         = require('../../core/errors/AppError');
+const logger                               = require('../../core/utils/logger');
 
 // ── Multer — memory storage, no disk writes ───────────────────────────────────
 const MAX_FILE_SIZE_BYTES = (parseInt(process.env.IMPORT_MAX_FILE_SIZE_MB) || 5) * 1024 * 1024;
@@ -46,7 +48,16 @@ function uploadMiddleware(req, res, next) {
     const message = err.code === 'LIMIT_FILE_SIZE'
       ? `File exceeds the ${process.env.IMPORT_MAX_FILE_SIZE_MB || 5} MB limit`
       : err.message;
-    return res.status(status).json({ success: false, message });
+
+    logger.warn('Import upload rejected', {
+      operation: 'EMPLOYEE_IMPORT',
+      status,
+      message,
+      reason: err.code || 'UNKNOWN',
+      userId: req.user?.id,
+    });
+
+    return next(new AppError(message, status));
   });
 }
 
@@ -55,10 +66,14 @@ function uploadMiddleware(req, res, next) {
 // Strictly admin only — never delegatable via custom permissions.
 function requireAdmin(req, res, next) {
   if (req.user?.systemRole === 'admin') return next();
-  return res.status(403).json({
-    success: false,
-    message: 'Access denied. Admin role required.',
+
+  logger.warn('Import access denied for non-admin user', {
+    operation: 'EMPLOYEE_IMPORT',
+    userId: req.user?.id,
+    systemRole: req.user?.systemRole,
   });
+
+  return next(new AppError('Access denied. Admin role required.', 403));
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────

@@ -4,6 +4,8 @@ const asyncWrapper = require('../../core/utils/asyncWrapper');
 const authService = require('./auth.service');
 
 const IS_PROD = process.env.NODE_ENV === 'production';
+const ACCESS_COOKIE_PATH = '/api';
+const REFRESH_COOKIE_PATH = '/api/auth';
 
 function setAccessCookie(res, token) {
 	res.cookie('lms_access', token, {
@@ -11,7 +13,7 @@ function setAccessCookie(res, token) {
 		secure: IS_PROD,
 		sameSite: IS_PROD ? 'strict' : 'lax',
 		maxAge: authService.ACCESS_EXPIRY_MS,
-		path: '/api',
+		path: ACCESS_COOKIE_PATH,
 	});
 }
 
@@ -21,13 +23,13 @@ function setRefreshCookie(res, token) {
 		secure: IS_PROD,
 		sameSite: IS_PROD ? 'strict' : 'lax',
 		maxAge: authService.REFRESH_EXPIRY_MS,
-		path: '/api/auth',
+		path: REFRESH_COOKIE_PATH,
 	});
 }
 
 function clearAllCookies(res) {
-	res.clearCookie('lms_access', { path: '/api' });
-	res.clearCookie('lms_refresh', { path: '/api/auth' });
+	res.clearCookie('lms_access', { path: ACCESS_COOKIE_PATH });
+	res.clearCookie('lms_refresh', { path: REFRESH_COOKIE_PATH });
 }
 
 const microsoftLogin = asyncWrapper(async (req, res) => {

@@ -8,7 +8,9 @@
  * GET  /api/import/logs       — paginated import history
  */
 
-const asyncWrapper     = require('../../core/utils/asyncWrapper');
+const asyncWrapper     = require('../../core/utils/asyncWrapper');        
+const { AppError }     = require('../../core/errors/AppError');
+const logger           = require('../../core/utils/logger');
 const { parseExcel }   = require('./import.parser');
 const { validateRows } = require('./import.validator');
 const { processRows }  = require('./import.service');
@@ -22,132 +24,170 @@ const ALLOWED_MIMETYPES = new Set([
   'application/vnd.ms-excel',
 ]);
 
+const OPERATION = 'EMPLOYEE_IMPORT';
+
+async function persistImportLog(payload, context = {}) {
+  try {
+    await ImportLog.create(payload);
+  } catch (logErr) {
+    logger.error('Failed to persist ImportLog entry', {
+      ...context,
+      operation: OPERATION,
+      error: logErr.message,
+    });
+  }
+}
+
+const buildContext = (req) => ({
+  operation: OPERATION,
+  userId: req.user?.id,
+  fileName: req.file?.originalname,
+});
+
 // ── POST /api/import/employees ────────────────────────────────────────────────
 const importEmployees = asyncWrapper(async (req, res) => {
-
-  if (!req.file) {
-    return res.status(400).json({
-      success: false,
-      message: 'No file received. Send multipart/form-data with field name "file".',
-    });
-  }
-  if (req.file.size > MAX_FILE_SIZE_BYTES) {
-    return res.status(413).json({
-      success: false,
-      message: `File exceeds the ${process.env.IMPORT_MAX_FILE_SIZE_MB || 5} MB limit.`,
-    });
-  }
-  if (!ALLOWED_MIMETYPES.has(req.file.mimetype)) {
-    return res.status(415).json({
-      success: false,
-      message: 'Unsupported file type. Only .xlsx and .xls files are accepted.',
-    });
-  }
-
-  // ── Step 1: Parse ──────────────────────────────────────────────────────────
+  const context = buildContext(req);
   let parsed;
+  let validationOutcome;
+  let processingResult;
+
+  logger.info('Import request received', context);
+
   try {
-    parsed = parseExcel(req.file.buffer, { maxRows: MAX_ROWS });
-  } catch (parseErr) {
-    return res.status(parseErr.statusCode || 422).json({
-      success: false, message: parseErr.message,
+    if (!req.file) {
+      throw new AppError('No file received. Send multipart/form-data with field name "file".', 400);
+    }
+    if (req.file.size > MAX_FILE_SIZE_BYTES) {
+      throw new AppError(`File exceeds the ${process.env.IMPORT_MAX_FILE_SIZE_MB || 5} MB limit.`, 413);
+    }
+    if (!ALLOWED_MIMETYPES.has(req.file.mimetype)) {
+      throw new AppError('Unsupported file type. Only .xlsx and .xls files are accepted.', 415);
+    }
+
+    // ── Step 1: Parse ───────────────────────────────────────────────────────
+    try {
+      parsed = parseExcel(req.file.buffer, { maxRows: MAX_ROWS });
+      logger.info('Import file parsed', { ...context, totalRows: parsed.totalRows });
+    } catch (parseErr) {
+      throw new AppError(parseErr.message, parseErr.statusCode || 422);
+    }
+
+    if (parsed.rows.length === 0) {
+      throw new AppError('No data rows found in the uploaded file.', 422);
+    }
+
+    // ── Step 2: Validate ───────────────────────────────────────────────────
+    validationOutcome = validateRows(parsed.rows);
+    const { validRows, allErrors, allWarnings, skipped } = validationOutcome;
+    const totalSkipped = skipped;
+
+    logger.info('Import validation completed', {
+      ...context,
+      validRows: validRows.length,
+      skipped: totalSkipped,
     });
-  }
 
-  if (parsed.rows.length === 0) {
-    return res.status(422).json({
-      success: false, message: 'No data rows found in the uploaded file.',
+    if (validRows.length === 0) {
+      throw new AppError('All rows failed validation. No records were imported.', 422, undefined, { details: allErrors });
+    }
+
+    // ── Step 3: Process ────────────────────────────────────────────────────
+    processingResult = await processRows(validRows, { loggerContext: context });
+
+    logger.info('Import processing completed', {
+      ...context,
+      inserted: processingResult.inserted,
+      updated: processingResult.updated,
+      softDeleted: processingResult.softDeleted,
     });
-  }
 
-  // ── Step 2: Validate ───────────────────────────────────────────────────────
-  const { validRows, allErrors, allWarnings, skipped } = validateRows(parsed.rows);
+    // ── Step 4: Build final warnings ───────────────────────────────────────
+    const finalWarnings = [...allWarnings, ...processingResult.managerWarnings];
 
-  // skipped = rows that had content but failed validation
-  //           (missing required fields, bad format, duplicate emp# or email)
-  // parsed.skippedBlanks = completely empty template rows — NOT counted as skipped
-  //           because a 500-row template with 18 employees has 482 blank rows
-  //           which are just unused template space, not failed records
-  const totalSkipped = skipped; // blank rows shown separately in blank_rows_ignored
+    if (processingResult.softDeleted > 0) {
+      finalWarnings.push({
+        field:   'Soft Delete',
+        message: `${processingResult.softDeleted} employee(s) deactivated (not in file): ${processingResult.softDeletedEmps.join(', ')}`,
+      });
+    }
+    if (processingResult.promotedToManager.length > 0) {
+      finalWarnings.push({
+        field:   'System Role',
+        message: `Promoted to manager: ${processingResult.promotedToManager.join(', ')}`,
+      });
+    }
+    if (processingResult.demotedToEmployee.length > 0) {
+      finalWarnings.push({
+        field:   'System Role',
+        message: `Demoted to employee (no longer managing anyone): ${processingResult.demotedToEmployee.join(', ')}`,
+      });
+    }
 
-  if (validRows.length === 0) {
-    return res.status(422).json({
-      success:  false,
-      message:  'All rows failed validation. No records were imported.',
+    const status = (allErrors.length > 0 || finalWarnings.length > 0)
+      ? 'completed_with_warnings'
+      : 'completed';
+
+    // ── Step 5: Persist import log ─────────────────────────────────────────
+    await persistImportLog({
+      uploaded_by: req.user.id,
+      file_name:   req.file.originalname,
+      total_rows:  parsed.totalRows,
+      inserted:    processingResult.inserted,
+      updated:     processingResult.updated,
+      skipped:     totalSkipped,
+      warnings:    finalWarnings.length ? finalWarnings : null,
+      errors:      allErrors.length     ? allErrors     : null,
+      status,
+    }, { ...context, step: 'success' });
+
+    logger.info('Import completed', { ...context, status });
+
+    // ── Step 6: Respond ────────────────────────────────────────────────────
+    return res.status(200).json({
+      success: true,
+      message: status === 'completed'
+        ? 'Import completed successfully.'
+        : 'Import completed with warnings.',
+      summary: {
+        total_rows_in_file:  parsed.totalRows,
+        inserted:            processingResult.inserted,
+        updated:             processingResult.updated,
+        skipped:             totalSkipped,
+        blank_rows_ignored:  parsed.skippedBlanks,
+        deactivated:         processingResult.softDeleted,
+        promoted_to_manager: processingResult.promotedToManager.length,
+        demoted_to_employee: processingResult.demotedToEmployee.length,
+      },
       errors:   allErrors,
-      warnings: allWarnings,
+      warnings: finalWarnings,
     });
+  } catch (err) {
+    const normalizedError = err instanceof AppError
+      ? err
+      : new AppError(err.message, err.statusCode || 500);
+
+    const failureErrors = validationOutcome?.allErrors?.length
+      ? validationOutcome.allErrors
+      : [{ field: 'Import', message: normalizedError.message }];
+
+    const failureWarnings = validationOutcome?.allWarnings?.length ? validationOutcome.allWarnings : null;
+
+    await persistImportLog({
+      uploaded_by: req.user?.id ?? null,
+      file_name:   req.file?.originalname ?? 'unknown',
+      total_rows:  parsed?.totalRows ?? 0,
+      inserted:    processingResult?.inserted ?? 0,
+      updated:     processingResult?.updated ?? 0,
+      skipped:     validationOutcome?.skipped ?? 0,
+      warnings:    failureWarnings,
+      errors:      failureErrors,
+      status:      'failed',
+    }, { ...context, step: 'failure' });
+
+    logger.error('Import failed', { ...context, error: normalizedError.message });
+
+    throw normalizedError;
   }
-
-  // ── Step 3: Process (all 6 passes inside one transaction) ─────────────────
-  let result;
-  try {
-    result = await processRows(validRows);
-  } catch (processErr) {
-    return res.status(500).json({
-      success: false,
-      message: `Import failed and was rolled back: ${processErr.message}`,
-    });
-  }
-
-  // ── Step 4: Build final warnings ──────────────────────────────────────────
-  const finalWarnings = [...allWarnings, ...result.managerWarnings];
-
-  if (result.softDeleted > 0) {
-    finalWarnings.push({
-      field:   'Soft Delete',
-      message: `${result.softDeleted} employee(s) deactivated (not in file): ${result.softDeletedEmps.join(', ')}`,
-    });
-  }
-  if (result.promotedToManager.length > 0) {
-    finalWarnings.push({
-      field:   'System Role',
-      message: `Promoted to manager: ${result.promotedToManager.join(', ')}`,
-    });
-  }
-  if (result.demotedToEmployee.length > 0) {
-    finalWarnings.push({
-      field:   'System Role',
-      message: `Demoted to employee (no longer managing anyone): ${result.demotedToEmployee.join(', ')}`,
-    });
-  }
-
-  const status = allErrors.length > 0 || finalWarnings.length > 0
-    ? 'completed_with_warnings'
-    : 'completed';
-
-  // ── Step 5: Persist import log ─────────────────────────────────────────────
-  await ImportLog.create({
-    uploaded_by: req.user.id,
-    file_name:   req.file.originalname,
-    total_rows:  parsed.totalRows,   // non-blank rows only (excludes empty template rows)
-    inserted:    result.inserted,
-    updated:     result.updated,
-    skipped:     totalSkipped,
-    warnings:    finalWarnings.length ? finalWarnings : null,
-    errors:      allErrors.length     ? allErrors     : null,
-    status,
-  });
-
-  // ── Step 6: Respond ────────────────────────────────────────────────────────
-  return res.status(200).json({
-    success: true,
-    message: status === 'completed'
-      ? 'Import completed successfully.'
-      : 'Import completed with warnings.',
-    summary: {
-      total_rows_in_file:  parsed.totalRows,
-      inserted:            result.inserted,
-      updated:             result.updated,
-      skipped:             totalSkipped,
-      blank_rows_ignored:  parsed.skippedBlanks,
-      deactivated:         result.softDeleted,
-      promoted_to_manager: result.promotedToManager.length,
-      demoted_to_employee: result.demotedToEmployee.length,
-    },
-    errors:   allErrors,
-    warnings: finalWarnings,
-  });
 });
 
 // ── GET /api/import/logs ──────────────────────────────────────────────────────

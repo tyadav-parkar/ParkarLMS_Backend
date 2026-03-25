@@ -70,4 +70,13 @@ const SchedulerLog = sequelize.define(
   }
 );
 
+/**
+ * Usage (future scheduler jobs):
+ * await SchedulerLog.create({
+ *   job_name: 'nightly-sync',
+ *   scheduled_time: new Date(),
+ *   status: 'running',
+ * });
+ */
+
 module.exports = SchedulerLog;
