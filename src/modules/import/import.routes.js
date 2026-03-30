@@ -17,6 +17,7 @@ const multer  = require('multer');
 const router  = express.Router();
 
 const { authMiddleware }                   = require('../../core/middlewares/authMiddleware');
+const { requireAdminStrict }               = require('../roles/roles.permissions');
 const { importEmployees, getImportLogs }   = require('./import.controller');
 const { AppError }                         = require('../../core/errors/AppError');
 const logger                               = require('../../core/utils/logger');
@@ -61,23 +62,8 @@ function uploadMiddleware(req, res, next) {
   });
 }
 
-// ── Admin guard ───────────────────────────────────────────────────────────────
-// Import is a destructive operation (upserts + soft deletes entire headcount).
-// Strictly admin only — never delegatable via custom permissions.
-function requireAdmin(req, res, next) {
-  if (req.user?.systemRole === 'admin') return next();
-
-  logger.warn('Import access denied for non-admin user', {
-    operation: 'EMPLOYEE_IMPORT',
-    userId: req.user?.id,
-    systemRole: req.user?.systemRole,
-  });
-
-  return next(new AppError('Access denied. Admin role required.', 403));
-}
-
 // ── Routes ────────────────────────────────────────────────────────────────────
-router.post('/employees', authMiddleware, requireAdmin, uploadMiddleware, importEmployees);
-router.get('/logs',       authMiddleware, requireAdmin, getImportLogs);
+router.post('/employees', authMiddleware, requireAdminStrict, uploadMiddleware, importEmployees);
+router.get('/logs',       authMiddleware, requireAdminStrict, getImportLogs);
 
 module.exports = router;

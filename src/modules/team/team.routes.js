@@ -3,10 +3,21 @@
 const express = require('express');
 const router  = express.Router();
 
-const { authMiddleware }        = require('../../core/middlewares/authMiddleware');
-const { myteam, getJobTitles }  = require('./team.controller');
+const { authMiddleware } = require('../../core/middlewares/authMiddleware');
+const { requireStrictRole } = require('../../modules/roles/roles.permissions');
+const {
+	myteam,
+	indirectTeam,
+	getJobTitles,
+	getIndirectJobTitles,
+} = require('./team.controller');
 
-router.get('/',           authMiddleware, myteam);
-router.get('/job-titles', authMiddleware, getJobTitles);
+router.use(authMiddleware);
+router.use(requireStrictRole('manager'));
+
+router.get('/', myteam);
+router.get('/indirect', indirectTeam);
+router.get('/job-titles', getJobTitles);
+router.get('/indirect/job-titles', getIndirectJobTitles);
 
 module.exports = router;
