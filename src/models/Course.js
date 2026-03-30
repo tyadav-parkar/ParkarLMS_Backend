@@ -33,6 +33,11 @@ const Course = sequelize.define(
       type: DataTypes.STRING(100),
       allowNull: true,
     },
+    difficulty: {
+      type: DataTypes.ENUM('Beginner', 'Intermediate', 'Advanced'),
+      allowNull: false,
+      defaultValue: 'Beginner',
+    },
     estimated_duration_months: {
       type: DataTypes.DECIMAL(4, 1),
       allowNull: true,

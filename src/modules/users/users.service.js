@@ -67,6 +67,13 @@ async function assignRole(employeeId, roleId, actor, req) {
     };
   }
 
+  if (Number(employeeId) === Number(actor.id)) {
+    return {
+      status: 422,
+      body: { success: false, message: 'You cannot change your own role' },
+    };
+  }
+
   const result = await withTransaction(async (transaction) => {
     const employee = await Employee.scope('withInactive').findByPk(employeeId, {
       include: [{ model: Role, as: 'roles', through: { attributes: [] } }],
