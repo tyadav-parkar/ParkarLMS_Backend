@@ -1,5 +1,5 @@
 'use strict';
-
+ 
 const { Op, literal, QueryTypes } = require('sequelize');
 const {
   Course,
@@ -12,17 +12,17 @@ const {
 const { withTransaction } = require('../../core/config/database');
 const { logActivity, LOG_ACTIONS } = require('../audit/audit.service');
 const { AppError, NotFoundError, ConflictError } = require('../../core/errors/AppError');
-
+ 
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
-
+ 
 function normalizePagination(query) {
   const page = Math.max(1, parseInt(query.page, 10) || 1);
   const limit = Math.min(MAX_LIMIT, Math.max(1, parseInt(query.limit, 10) || DEFAULT_LIMIT));
   const offset = (page - 1) * limit;
   return { page, limit, offset };
 }
-
+ 
 function serializeCourse(course) {
   const raw = course.get ? course.get({ plain: true }) : course;
   return {
@@ -32,7 +32,7 @@ function serializeCourse(course) {
     externalUrl: raw.external_url,
     category: raw.category,
     difficulty: raw.difficulty,
-    estimatedDurationMonths: raw.estimated_duration_months,
+    estimatedDurationHours: raw.estimated_duration_hours,
     description: raw.description,
     prerequisites: raw.prerequisites,
     status: raw.is_active ? 'active' : 'archived',
@@ -42,7 +42,7 @@ function serializeCourse(course) {
     enrolledCount: Number(raw.enrolled_count || 0),
   };
 }
-
+ 
 function serializeAssignment(row) {
   const raw = row.get ? row.get({ plain: true }) : row;
   return {
@@ -58,7 +58,7 @@ function serializeAssignment(row) {
     notes: raw.notes,
   };
 }
-
+ 
 function serializeEmployeeAssignment(row) {
   const raw = row.get ? row.get({ plain: true }) : row;
   return {
@@ -78,7 +78,7 @@ function serializeEmployeeAssignment(row) {
     notes: raw.notes,
   };
 }
-
+ 
 function serializeMyAssignment(row) {
   const raw = row.get ? row.get({ plain: true }) : row;
   return {
@@ -98,7 +98,7 @@ function serializeMyAssignment(row) {
           externalUrl: raw.course.external_url,
           category: raw.course.category,
           difficulty: raw.course.difficulty,
-          estimatedDurationMonths: raw.course.estimated_duration_months,
+          estimatedDurationHours: raw.course.estimated_duration_hours, // ✅ fixed
           description: raw.course.description,
           prerequisites: raw.course.prerequisites,
         }
@@ -112,7 +112,7 @@ function serializeMyAssignment(row) {
       : null,
   };
 }
-
+ 
 function getActorRoles(actor) {
   if (!actor) return [];
   const roles = Array.isArray(actor.roles) ? actor.roles : [actor.role];
@@ -120,13 +120,13 @@ function getActorRoles(actor) {
     .filter(Boolean)
     .map((role) => String(role).toLowerCase());
 }
-
+ 
 function isAdminActor(actor) {
   const roles = getActorRoles(actor);
   const systemRole = String(actor?.systemRole || '').toLowerCase();
   return roles.includes('admin') || systemRole === 'admin';
 }
-
+ 
 async function getManagedEmployeeIds(managerId) {
   const rows = await sequelize.query(
     `
@@ -134,9 +134,9 @@ async function getManagedEmployeeIds(managerId) {
       SELECT id
       FROM employees
       WHERE manager_id = :managerId
-
+ 
       UNION ALL
-
+ 
       SELECT e.id
       FROM employees e
       INNER JOIN team t ON e.manager_id = t.id
@@ -146,10 +146,10 @@ async function getManagedEmployeeIds(managerId) {
     `,
     { replacements: { managerId }, type: QueryTypes.SELECT }
   );
-
+ 
   return rows.map((row) => Number(row.id)).filter((id) => Number.isFinite(id));
 }
-
+ 
 async function getManagerScopeOrThrow(actor) {
   const managedIds = await getManagedEmployeeIds(actor.id);
   if (!managedIds.length) {
@@ -157,13 +157,13 @@ async function getManagerScopeOrThrow(actor) {
   }
   return managedIds;
 }
-
+ 
 async function findCourseOrThrow(courseId) {
   const course = await Course.scope('all').findByPk(courseId);
   if (!course) throw new NotFoundError('Course');
   return course;
 }
-
+ 
 function getActorIdOrThrow(actor) {
   const actorId = Number(actor?.id);
   if (!actorId) {
@@ -171,7 +171,7 @@ function getActorIdOrThrow(actor) {
   }
   return actorId;
 }
-
+ 
 function getMyAssignmentInclude() {
   return [
     {
@@ -184,7 +184,7 @@ function getMyAssignmentInclude() {
         'external_url',
         'category',
         'difficulty',
-        'estimated_duration_months',
+        'estimated_duration_hours', // ✅ fixed
         'description',
         'prerequisites',
       ],
@@ -198,7 +198,7 @@ function getMyAssignmentInclude() {
     },
   ];
 }
-
+ 
 async function getCourses(query) {
   const { page, limit, offset } = normalizePagination(query);
   const where = {};
@@ -206,7 +206,7 @@ async function getCourses(query) {
   const category = query.category?.trim();
   const difficulty = query.difficulty;
   const status = query.status || 'active';
-
+ 
   if (search) {
     where[Op.or] = [
       { name: { [Op.iLike]: `%${search}%` } },
@@ -216,9 +216,9 @@ async function getCourses(query) {
   if (category) where.category = category;
   if (difficulty) where.difficulty = difficulty;
   where.is_active = status === 'archived' ? false : true;
-
+ 
   const total = await Course.scope('all').count({ where });
-
+ 
   const data = await Course.scope('all').findAll({
     where,
     attributes: {
@@ -228,7 +228,7 @@ async function getCourses(query) {
     limit,
     offset,
   });
-
+ 
   return {
     data: data.map(serializeCourse),
     meta: {
@@ -239,7 +239,7 @@ async function getCourses(query) {
     },
   };
 }
-
+ 
 async function createCourse(payload, actor, req) {
   const course = await Course.create({
     name: payload.title,
@@ -247,13 +247,13 @@ async function createCourse(payload, actor, req) {
     external_url: payload.externalUrl || null,
     category: payload.category || null,
     difficulty: payload.difficulty,
-    estimated_duration_months: payload.estimatedDurationMonths ?? null,
+    estimated_duration_hours: payload.estimatedDurationHours ?? null, // ✅ fixed
     description: payload.description || null,
     prerequisites: payload.prerequisites || null,
     is_active: true,
     created_by: actor.id,
   });
-
+ 
   logActivity({
     employeeId: actor.id,
     actionType: LOG_ACTIONS.COURSE_CREATED,
@@ -263,55 +263,55 @@ async function createCourse(payload, actor, req) {
     metadata: { course_name: course.name },
     req,
   });
-
+ 
   const withCount = await Course.scope('all').findByPk(course.id, {
     attributes: {
       include: [[literal('(SELECT COUNT(*) FROM course_assignments ca WHERE ca.course_id = "Course"."id")'), 'enrolled_count']],
     },
   });
-
+ 
   return serializeCourse(withCount);
 }
-
+ 
 async function updateCourse(courseId, payload) {
   const course = await findCourseOrThrow(courseId);
-
+ 
   if (!course.is_active) {
     throw new AppError('Archived courses cannot be updated', 422, 'VALIDATION_ERROR');
   }
-
+ 
   await course.update({
     ...(payload.title !== undefined ? { name: payload.title } : {}),
     ...(payload.provider !== undefined ? { provider: payload.provider || null } : {}),
     ...(payload.externalUrl !== undefined ? { external_url: payload.externalUrl || null } : {}),
     ...(payload.category !== undefined ? { category: payload.category || null } : {}),
     ...(payload.difficulty !== undefined ? { difficulty: payload.difficulty } : {}),
-    ...(payload.estimatedDurationMonths !== undefined ? { estimated_duration_months: payload.estimatedDurationMonths } : {}),
+    ...(payload.estimatedDurationHours !== undefined ? { estimated_duration_hours: payload.estimatedDurationHours } : {}), // ✅ fixed
     ...(payload.description !== undefined ? { description: payload.description || null } : {}),
     ...(payload.prerequisites !== undefined ? { prerequisites: payload.prerequisites || null } : {}),
   });
-
+ 
   const withCount = await Course.scope('all').findByPk(course.id, {
     attributes: {
       include: [[literal('(SELECT COUNT(*) FROM course_assignments ca WHERE ca.course_id = "Course"."id")'), 'enrolled_count']],
     },
   });
-
+ 
   return serializeCourse(withCount);
 }
-
+ 
 async function archiveCourse(courseId, actor, req) {
   const course = await findCourseOrThrow(courseId);
-
+ 
   if (!course.is_active) {
     return {
       message: 'Course already archived',
       data: serializeCourse(course),
     };
   }
-
+ 
   await course.update({ is_active: false });
-
+ 
   logActivity({
     employeeId: actor.id,
     actionType: LOG_ACTIONS.COURSE_ARCHIVED,
@@ -321,27 +321,27 @@ async function archiveCourse(courseId, actor, req) {
     metadata: { course_name: course.name },
     req,
   });
-
+ 
   return {
     message: 'Course archived successfully',
     data: serializeCourse(course),
   };
 }
-
+ 
 async function getCourseAssignments(courseId, query, actor) {
   await findCourseOrThrow(courseId);
-
+ 
   const { page, limit, offset } = normalizePagination(query);
   const where = { course_id: Number(courseId) };
   if (query.status) where.status = query.status;
-
+ 
   if (actor && !isAdminActor(actor)) {
     const managedIds = await getManagerScopeOrThrow(actor);
     where.employee_id = { [Op.in]: managedIds };
   }
-
+ 
   const total = await CourseAssignment.count({ where });
-
+ 
   const rows = await CourseAssignment.findAll({
     where,
     include: [
@@ -355,7 +355,7 @@ async function getCourseAssignments(courseId, query, actor) {
     limit,
     offset,
   });
-
+ 
   return {
     data: rows.map(serializeAssignment),
     meta: {
@@ -366,18 +366,18 @@ async function getCourseAssignments(courseId, query, actor) {
     },
   };
 }
-
+ 
 async function bulkAssignCourse(courseId, payload, actor, req) {
   const employeeIds = payload.employeeIds.map(Number);
   const uniqueIds = [...new Set(employeeIds)];
   if (uniqueIds.length !== employeeIds.length) {
     throw new AppError('employeeIds must not contain duplicates', 400, 'VALIDATION_ERROR');
   }
-
+ 
   if (uniqueIds.includes(Number(actor.id))) {
     throw new AppError('Self-assignment is not allowed', 422, 'VALIDATION_ERROR');
   }
-
+ 
   if (!isAdminActor(actor)) {
     const managedIds = await getManagerScopeOrThrow(actor);
     const allowedSet = new Set(managedIds.map((id) => Number(id)));
@@ -390,12 +390,12 @@ async function bulkAssignCourse(courseId, payload, actor, req) {
       );
     }
   }
-
+ 
   const course = await findCourseOrThrow(courseId);
   if (!course.is_active) {
     throw new AppError('Archived courses cannot receive new assignments', 422, 'VALIDATION_ERROR');
   }
-
+ 
   const employees = await Employee.findAll({
     where: { id: { [Op.in]: uniqueIds }, is_active: true },
     include: [
@@ -408,13 +408,13 @@ async function bulkAssignCourse(courseId, payload, actor, req) {
     ],
     attributes: ['id', 'first_name', 'last_name', 'email'],
   });
-
+ 
   if (employees.length !== uniqueIds.length) {
     const found = new Set(employees.map((e) => e.id));
     const missing = uniqueIds.filter((id) => !found.has(id));
     throw new AppError(`Some employees are missing or inactive: ${missing.join(', ')}`, 400, 'VALIDATION_ERROR');
   }
-
+ 
   const adminTargets = employees.filter((emp) =>
     (emp.roles || []).some((role) => String(role.name || '').toLowerCase() === 'admin')
   );
@@ -422,7 +422,7 @@ async function bulkAssignCourse(courseId, payload, actor, req) {
     const blockedIds = adminTargets.map((emp) => emp.id);
     throw new AppError(`Course cannot be assigned to admin account(s): ${blockedIds.join(', ')}`, 422, 'VALIDATION_ERROR');
   }
-
+ 
   const existing = await CourseAssignment.findAll({
     where: {
       course_id: Number(courseId),
@@ -430,12 +430,12 @@ async function bulkAssignCourse(courseId, payload, actor, req) {
     },
     attributes: ['employee_id'],
   });
-
+ 
   if (existing.length) {
     const duplicateIds = existing.map((row) => row.employee_id);
     throw new ConflictError(`Duplicate assignment blocked for employee IDs: ${duplicateIds.join(', ')}`);
   }
-
+ 
   const createdAssignments = await withTransaction(async (transaction) => {
     await CourseAssignment.bulkCreate(
       uniqueIds.map((employeeId) => ({
@@ -449,7 +449,7 @@ async function bulkAssignCourse(courseId, payload, actor, req) {
       })),
       { transaction }
     );
-
+ 
     return CourseAssignment.findAll({
       where: {
         course_id: Number(courseId),
@@ -460,7 +460,7 @@ async function bulkAssignCourse(courseId, payload, actor, req) {
       transaction,
     });
   });
-
+ 
   logActivity({
     employeeId: actor.id,
     actionType: LOG_ACTIONS.COURSE_ASSIGNED,
@@ -473,7 +473,7 @@ async function bulkAssignCourse(courseId, payload, actor, req) {
     },
     req,
   });
-
+ 
   return {
     data: createdAssignments.map(serializeAssignment),
     meta: {
@@ -481,10 +481,10 @@ async function bulkAssignCourse(courseId, payload, actor, req) {
     },
   };
 }
-
+ 
 async function cancelAssignment(courseId, assignmentId, actor) {
   await findCourseOrThrow(courseId);
-
+ 
   const assignment = await CourseAssignment.findOne({
     where: {
       id: Number(assignmentId),
@@ -492,29 +492,28 @@ async function cancelAssignment(courseId, assignmentId, actor) {
     },
     include: [{ model: Employee, as: 'employee', attributes: ['id', 'first_name', 'last_name'] }],
   });
-
+ 
   if (!assignment) throw new NotFoundError('Assignment');
-
+ 
   if (actor && !isAdminActor(actor)) {
     const managedIds = await getManagerScopeOrThrow(actor);
     if (!managedIds.includes(Number(assignment.employee_id))) {
       throw new AppError('You can only cancel assignments for your direct or indirect team.', 403, 'FORBIDDEN');
     }
   }
-
+ 
   if (assignment.status === 'completed') {
     throw new AppError('Completed assignment cannot be cancelled', 422, 'VALIDATION_ERROR');
   }
-
+ 
   if (assignment.status !== 'cancelled') {
     await assignment.update({ status: 'cancelled', completion_date: null });
   }
-
+ 
   return serializeAssignment(assignment);
 }
-
-async function getEligibleEmployees(query, actor) {
-  const { page, limit, offset } = normalizePagination(query);
+ 
+async function getAllEligibleEmployeeIds(query, actor) {
   const search = query.search?.trim();
   const role = query.role?.trim();
   const department = query.department?.trim();
@@ -570,13 +569,87 @@ async function getEligibleEmployees(query, actor) {
     ...(Object.keys(departmentWhere).length ? { where: departmentWhere } : {}),
   };
 
+  const rows = await Employee.scope('withInactive').findAll({
+    where,
+    include: [roleInclude, departmentInclude],
+    attributes: ['id'],
+    order: [['first_name', 'ASC'], ['last_name', 'ASC']],
+    subQuery: false,
+  });
+
+  const eligibleIds = rows.map(row => row.id);
+
+  return {
+    eligibleEmployeeIds: eligibleIds,
+    totalCount: eligibleIds.length,
+  };
+}
+
+async function getEligibleEmployees(query, actor) {
+  const { page, limit, offset } = normalizePagination(query);
+
+  const search = query.search?.trim();
+  const role = query.role?.trim();
+  const department = query.department?.trim();
+  const jobTitle = query.jobTitle?.trim();
+ 
+  const where = { is_active: true };
+  const andConditions = [
+    literal(`NOT EXISTS (SELECT 1 FROM employee_roles er JOIN roles r ON r.id = er.role_id WHERE er.employee_id = "Employee"."id" AND LOWER(r.name) = 'admin')`),
+  ];
+  if (actor?.id) {
+    andConditions.push({ id: { [Op.ne]: Number(actor.id) } });
+  }
+ 
+  if (actor && !isAdminActor(actor)) {
+    const managedIds = await getManagerScopeOrThrow(actor);
+    andConditions.push({ id: { [Op.in]: managedIds } });
+  }
+ 
+  where[Op.and] = andConditions;
+ 
+  if (search) {
+    where[Op.or] = [
+      { first_name: { [Op.iLike]: `%${search}%` } },
+      { last_name: { [Op.iLike]: `%${search}%` } },
+      { email: { [Op.iLike]: `%${search}%` } },
+      { employee_number: { [Op.iLike]: `%${search}%` } },
+    ];
+  }
+  if (jobTitle) where.job_title = { [Op.iLike]: `%${jobTitle}%` };
+ 
+  const roleWhere = {};
+  if (query.role_id) roleWhere.id = Number(query.role_id);
+  if (role) roleWhere.name = { [Op.iLike]: role };
+ 
+  const roleInclude = {
+    model: Role,
+    as: 'roles',
+    through: { attributes: [] },
+    attributes: ['id', 'name'],
+    required: Boolean(role || query.role_id),
+    ...(Object.keys(roleWhere).length ? { where: roleWhere } : {}),
+  };
+ 
+  const departmentWhere = {};
+  if (query.department_id) departmentWhere.id = Number(query.department_id);
+  if (department) departmentWhere.name = { [Op.iLike]: department };
+ 
+  const departmentInclude = {
+    model: Department,
+    as: 'department',
+    attributes: ['id', 'name'],
+    required: Boolean(department || query.department_id),
+    ...(Object.keys(departmentWhere).length ? { where: departmentWhere } : {}),
+  };
+ 
   const total = await Employee.scope('withInactive').count({
     where,
     include: [roleInclude, departmentInclude],
     distinct: true,
     col: 'id',
   });
-
+ 
   const rows = await Employee.scope('withInactive').findAll({
     where,
     include: [roleInclude, departmentInclude],
@@ -586,7 +659,7 @@ async function getEligibleEmployees(query, actor) {
     offset,
     subQuery: false,
   });
-
+ 
   return {
     data: rows.map((row) => ({
       id: row.id,
@@ -605,16 +678,16 @@ async function getEligibleEmployees(query, actor) {
     },
   };
 }
-
+ 
 async function getEmployeeAssignments(query, actor) {
   const { page, limit, offset } = normalizePagination(query);
   const search = query.search?.trim();
   const employeeId = query.employeeId ? Number(query.employeeId) : null;
-
+ 
   const where = {};
   if (query.status) where.status = query.status;
   if (employeeId) where.employee_id = employeeId;
-
+ 
   if (actor && !isAdminActor(actor)) {
     const managedIds = await getManagerScopeOrThrow(actor);
     if (employeeId && !managedIds.includes(employeeId)) {
@@ -624,7 +697,7 @@ async function getEmployeeAssignments(query, actor) {
       ? employeeId
       : { [Op.in]: managedIds };
   }
-
+ 
   const include = [
     {
       model: Employee,
@@ -639,7 +712,7 @@ async function getEmployeeAssignments(query, actor) {
       required: true,
     },
   ];
-
+ 
   if (search) {
     where[Op.or] = [
       { '$employee.first_name$': { [Op.iLike]: `%${search}%` } },
@@ -648,14 +721,14 @@ async function getEmployeeAssignments(query, actor) {
       { '$course.name$': { [Op.iLike]: `%${search}%` } },
     ];
   }
-
+ 
   const total = await CourseAssignment.count({
     where,
     include,
     distinct: true,
     col: 'id',
   });
-
+ 
   const rows = await CourseAssignment.findAll({
     where,
     include,
@@ -664,7 +737,7 @@ async function getEmployeeAssignments(query, actor) {
     offset,
     subQuery: false,
   });
-
+ 
   return {
     data: rows.map(serializeEmployeeAssignment),
     meta: {
@@ -675,20 +748,20 @@ async function getEmployeeAssignments(query, actor) {
     },
   };
 }
-
+ 
 async function getMyAssignments(query, actor) {
   const actorId = getActorIdOrThrow(actor);
   const { page, limit, offset } = normalizePagination(query);
   const search = query.search?.trim();
-
+ 
   const where = {
     employee_id: actorId,
   };
-
+ 
   if (query.status) where.status = query.status;
-
+ 
   const include = getMyAssignmentInclude();
-
+ 
   if (search) {
     where[Op.or] = [
       { '$course.name$': { [Op.iLike]: `%${search}%` } },
@@ -696,14 +769,14 @@ async function getMyAssignments(query, actor) {
       { '$course.category$': { [Op.iLike]: `%${search}%` } },
     ];
   }
-
+ 
   const total = await CourseAssignment.count({
     where,
     include,
     distinct: true,
     col: 'id',
   });
-
+ 
   const rows = await CourseAssignment.findAll({
     where,
     include,
@@ -712,7 +785,7 @@ async function getMyAssignments(query, actor) {
     offset,
     subQuery: false,
   });
-
+ 
   return {
     data: rows.map(serializeMyAssignment),
     meta: {
@@ -723,10 +796,10 @@ async function getMyAssignments(query, actor) {
     },
   };
 }
-
+ 
 async function getMyAssignmentDetail(assignmentId, actor) {
   const actorId = getActorIdOrThrow(actor);
-
+ 
   const row = await CourseAssignment.findOne({
     where: {
       id: Number(assignmentId),
@@ -734,15 +807,15 @@ async function getMyAssignmentDetail(assignmentId, actor) {
     },
     include: getMyAssignmentInclude(),
   });
-
+ 
   if (!row) throw new NotFoundError('Assignment');
-
+ 
   return serializeMyAssignment(row);
 }
-
+ 
 async function startMyAssignment(assignmentId, actor, req) {
   const actorId = getActorIdOrThrow(actor);
-
+ 
   const assignment = await CourseAssignment.findOne({
     where: {
       id: Number(assignmentId),
@@ -750,26 +823,26 @@ async function startMyAssignment(assignmentId, actor, req) {
     },
     include: getMyAssignmentInclude(),
   });
-
+ 
   if (!assignment) throw new NotFoundError('Assignment');
-
+ 
   if (assignment.status === 'cancelled') {
     throw new AppError('Cancelled assignment cannot be started', 422, 'VALIDATION_ERROR');
   }
-
+ 
   if (assignment.status === 'completed') {
     throw new AppError('Completed assignment cannot be started', 422, 'VALIDATION_ERROR');
   }
-
+ 
   if (assignment.status !== 'assigned') {
     throw new AppError('Only assigned courses can be started', 422, 'VALIDATION_ERROR');
   }
-
+ 
   await assignment.update({
     status: 'in_progress',
     completion_date: null,
   });
-
+ 
   logActivity({
     employeeId: actorId,
     actionType: LOG_ACTIONS.COURSE_STARTED,
@@ -782,13 +855,13 @@ async function startMyAssignment(assignmentId, actor, req) {
     },
     req,
   });
-
+ 
   return serializeMyAssignment(assignment);
 }
-
+ 
 async function completeMyAssignment(assignmentId, actor, req) {
   const actorId = getActorIdOrThrow(actor);
-
+ 
   const assignment = await CourseAssignment.findOne({
     where: {
       id: Number(assignmentId),
@@ -796,26 +869,26 @@ async function completeMyAssignment(assignmentId, actor, req) {
     },
     include: getMyAssignmentInclude(),
   });
-
+ 
   if (!assignment) throw new NotFoundError('Assignment');
-
+ 
   if (assignment.status === 'cancelled') {
     throw new AppError('Cancelled assignment cannot be completed', 422, 'VALIDATION_ERROR');
   }
-
+ 
   if (assignment.status === 'completed') {
     throw new AppError('Assignment already completed', 422, 'VALIDATION_ERROR');
   }
-
+ 
   if (assignment.status !== 'in_progress') {
     throw new AppError('Only in-progress courses can be completed', 422, 'VALIDATION_ERROR');
   }
-
+ 
   await assignment.update({
     status: 'completed',
     completion_date: new Date(),
   });
-
+ 
   logActivity({
     employeeId: actorId,
     actionType: LOG_ACTIONS.COURSE_COMPLETED,
@@ -828,10 +901,10 @@ async function completeMyAssignment(assignmentId, actor, req) {
     },
     req,
   });
-
+ 
   return serializeMyAssignment(assignment);
 }
-
+ 
 module.exports = {
   getCourses,
   createCourse,
@@ -846,4 +919,6 @@ module.exports = {
   bulkAssignCourse,
   cancelAssignment,
   getEligibleEmployees,
+  getAllEligibleEmployeeIds,
 };
+

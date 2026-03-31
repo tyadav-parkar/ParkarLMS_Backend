@@ -13,6 +13,8 @@ module.exports = {
       });
     }
 
+    await queryInterface.renameColumn('courses', 'estimated_duration_months', 'estimated_duration_hours');
+
     await queryInterface.sequelize.query(
       'CREATE UNIQUE INDEX IF NOT EXISTS courses_active_name_unique_idx ON courses (LOWER(name)) WHERE is_active = true'
     );
@@ -59,10 +61,16 @@ module.exports = {
     await queryInterface.sequelize.query('DROP INDEX IF EXISTS courses_active_name_unique_idx');
 
     const tableDef = await queryInterface.describeTable('courses');
+    if (tableDef.estimated_duration_hours) {
+      await queryInterface.renameColumn('courses', 'estimated_duration_hours', 'estimated_duration_months');
+    }
+
     if (tableDef.difficulty) {
       await queryInterface.removeColumn('courses', 'difficulty');
     }
 
     await queryInterface.sequelize.query('DROP TYPE IF EXISTS "enum_courses_difficulty"');
   },
+
 };
+

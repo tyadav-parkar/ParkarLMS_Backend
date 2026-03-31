@@ -38,10 +38,11 @@ const Course = sequelize.define(
       allowNull: false,
       defaultValue: 'Beginner',
     },
-    estimated_duration_months: {
-      type: DataTypes.DECIMAL(4, 1),
+    estimated_duration_hours: {
+      type: DataTypes.DECIMAL(5, 1),
       allowNull: true,
     },
+
     description: {
       type: DataTypes.TEXT,
       allowNull: true,

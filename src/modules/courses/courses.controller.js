@@ -63,6 +63,11 @@ const cancelAssignment = asyncWrapper(async (req, res) => {
   res.json({ success: true, message: 'Assignment cancelled successfully', data: result });
 });
 
+const getEligibleEmployeesIds = asyncWrapper(async (req, res) => {
+  const result = await coursesService.getAllEligibleEmployeeIds(req.query, req.user);
+  res.json({ success: true, data: result });
+});
+
 const getEligibleEmployees = asyncWrapper(async (req, res) => {
   const result = await coursesService.getEligibleEmployees(req.query, req.user);
   res.json({ success: true, data: result.data, meta: result.meta });
@@ -82,4 +87,6 @@ module.exports = {
   bulkAssignCourse,
   cancelAssignment,
   getEligibleEmployees,
+  getEligibleEmployeesIds,
 };
+

@@ -31,7 +31,7 @@ const createCourseSchema = Joi.object({
   externalUrl: Joi.string().uri().max(2048).allow('', null),
   category: Joi.string().trim().max(100).allow('', null),
   difficulty: Joi.string().valid('Beginner', 'Intermediate', 'Advanced').default('Beginner'),
-  estimatedDurationMonths: Joi.number().min(0).max(999.9).precision(1).allow(null),
+  estimatedDurationHours: Joi.number().min(0).max(9999.9).precision(1).allow(null),
   description: Joi.string().max(10000).allow('', null),
   prerequisites: Joi.string().max(10000).allow('', null),
 });
@@ -42,7 +42,7 @@ const updateCourseSchema = Joi.object({
   externalUrl: Joi.string().uri().max(2048).allow('', null),
   category: Joi.string().trim().max(100).allow('', null),
   difficulty: Joi.string().valid('Beginner', 'Intermediate', 'Advanced'),
-  estimatedDurationMonths: Joi.number().min(0).max(999.9).precision(1).allow(null),
+  estimatedDurationHours: Joi.number().min(0).max(9999.9).precision(1).allow(null),
   description: Joi.string().max(10000).allow('', null),
   prerequisites: Joi.string().max(10000).allow('', null),
 }).min(1);
