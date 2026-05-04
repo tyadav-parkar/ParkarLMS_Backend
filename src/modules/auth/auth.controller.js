@@ -11,7 +11,7 @@ function setAccessCookie(res, token) {
 	res.cookie('lms_access', token, {
 		httpOnly: true,
 		secure: IS_PROD,
-		sameSite: IS_PROD ? 'strict' : 'lax',
+		sameSite: IS_PROD ? 'lax' : 'lax',
 		maxAge: authService.ACCESS_EXPIRY_MS,
 		path: ACCESS_COOKIE_PATH,
 	});
@@ -21,7 +21,7 @@ function setRefreshCookie(res, token) {
 	res.cookie('lms_refresh', token, {
 		httpOnly: true,
 		secure: IS_PROD,
-		sameSite: IS_PROD ? 'strict' : 'lax',
+		sameSite: IS_PROD ? 'lax' : 'lax',
 		maxAge: authService.REFRESH_EXPIRY_MS,
 		path: REFRESH_COOKIE_PATH,
 	});
@@ -48,7 +48,7 @@ const microsoftCallback = asyncWrapper(async (req, res) => {
 });
 
 const refresh = asyncWrapper(async (req, res) => {
-	const result = await authService.refreshAuthSession(req.cookies?.lms_refresh, req)``;
+	const result = await authService.refreshAuthSession(req.cookies?.lms_refresh, req);
 	console.log("Refresh Result - ",result);
 	
 	if (result.clearCookies) clearAllCookies(res);
