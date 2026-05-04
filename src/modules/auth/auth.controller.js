@@ -39,7 +39,8 @@ const microsoftLogin = asyncWrapper(async (req, res) => {
 
 const microsoftCallback = asyncWrapper(async (req, res) => {
 	const result = await authService.handleMicrosoftCallback(req.query.code, req);
-
+	console.log("Result -",result);
+	
 	if (result.accessToken) setAccessCookie(res, result.accessToken);
 	if (result.refreshToken) setRefreshCookie(res, result.refreshToken);
 
@@ -47,8 +48,9 @@ const microsoftCallback = asyncWrapper(async (req, res) => {
 });
 
 const refresh = asyncWrapper(async (req, res) => {
-	const result = await authService.refreshAuthSession(req.cookies?.lms_refresh, req);
-
+	const result = await authService.refreshAuthSession(req.cookies?.lms_refresh, req)``;
+	console.log("Refresh Result - ",result);
+	
 	if (result.clearCookies) clearAllCookies(res);
 	if (result.accessToken) setAccessCookie(res, result.accessToken);
 	if (result.refreshToken) setRefreshCookie(res, result.refreshToken);

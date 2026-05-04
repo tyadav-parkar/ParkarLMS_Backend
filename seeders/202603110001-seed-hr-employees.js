@@ -5,7 +5,7 @@ const { Op } = require('sequelize');
 /**
  * admin-seed.js
  *
- * Seeds ONLY the admin employee (Tanishq Yadav — PINT099).
+ * Seeds ONLY the admin employee (Tanishq Yadav — PCG0442).
  * All other employees come from the Excel bulk import.
  *
  * Run order:
@@ -34,10 +34,10 @@ module.exports = {
     // department_id is null — admin's department will be set via Excel import
     // if needed, or can be set manually via User Management later.
     await queryInterface.bulkInsert('employees', [{
-      employee_number: 'PINT099',
-      first_name:      'Tanishq',
-      last_name:       'Yadav',
-      email:           'tyadav@parkar.in',
+      employee_number: 'PCG0442',
+      first_name:      'Sanket',
+      last_name:       'Rasal',
+      email:           'srasal@parkar.in',
       department_id:   null,
       manager_id:      null,
       job_title:       'Admin',
@@ -50,7 +50,7 @@ module.exports = {
 
     /* ── Fetch inserted admin id ─────────────────────────────────────────── */
     const [empRows] = await queryInterface.sequelize.query(
-      `SELECT id FROM employees WHERE employee_number = 'PINT099'`
+      `SELECT id FROM employees WHERE employee_number = 'PCG0442'`
     );
     const adminEmpId = empRows[0].id;
 
@@ -62,12 +62,12 @@ module.exports = {
       assigned_at: now,
     }]);
 
-    console.log('✅ Admin seeded: PINT099 (tyadav@parkar.in) — department will be set via Excel import');
+    console.log('✅ Admin seeded: PCG0442 (tyadav@parkar.in) — department will be set via Excel import');
   },
 
   async down(queryInterface) {
     const [empRows] = await queryInterface.sequelize.query(
-      `SELECT id FROM employees WHERE employee_number = 'PINT099'`
+      `SELECT id FROM employees WHERE employee_number = 'PCG0442'`
     );
     if (empRows.length > 0) {
       await queryInterface.bulkDelete('employee_roles', {
@@ -75,7 +75,7 @@ module.exports = {
       });
     }
     await queryInterface.bulkDelete('employees', {
-      employee_number: { [Op.in]: ['PINT099'] },
+      employee_number: { [Op.in]: ['PCG0442'] },
     });
   },
 
