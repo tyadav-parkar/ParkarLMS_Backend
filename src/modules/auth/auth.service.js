@@ -149,12 +149,18 @@ async function handleMicrosoftCallback(code, req) {
         return { redirectTo: `${process.env.FRONTEND_URL}/unauthorized?error=no_code` };
     }
  
-    const tokenResponse = await msalClient.acquireTokenByCode({
-        code,
-        scopes:      SCOPES,
-        redirectUri: process.env.AZURE_REDIRECT_URI,
-    });
- 
+    let tokenResponse;
+    try {
+        tokenResponse = await msalClient.acquireTokenByCode({
+            code,
+            scopes:      SCOPES,
+            redirectUri: process.env.AZURE_REDIRECT_URI,
+        });
+    } catch (err) {
+        console.error('[SSO] MSAL acquireTokenByCode failed:', err.message);
+        return { redirectTo: `${process.env.FRONTEND_URL}/login?error=auth_failed` };
+    }
+
     const emailFromAzure = tokenResponse.account.username.toLowerCase().trim();
  
     const employee = await Employee.scope('withInactive').findOne({
