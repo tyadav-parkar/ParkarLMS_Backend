@@ -33,7 +33,7 @@ const whereClause = {
   const total = await Employee.count({ where: whereClause });
   const data  = await Employee.findAll({
     where:      whereClause,
-    attributes: ['id', 'employee_number', 'first_name', 'last_name', 'email', 'job_title', 'band_identifier'],
+    attributes: ['id', 'employee_number', 'first_name', 'last_name', 'email', 'job_title', 'band_identifier', 'ideal_role_id', 'current_career_path_id'],
     include: [{
       model:      Department,
       as:         'department',
@@ -142,6 +142,8 @@ const getIndirectReports = async (
       e.email,
       e.job_title,
       e.band_identifier,
+      e.ideal_role_id,
+      e.current_career_path_id,
       tree.lvl          AS depth,
       d.id              AS "department.id",
       d.name            AS "department.name",

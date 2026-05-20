@@ -3,8 +3,8 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../core/config/database');
 
-const CareerPath = sequelize.define(
-  'CareerPath',
+const CareerPathStepCourse = sequelize.define(
+  'CareerPathStepCourse',
   {
     id: {
       type: DataTypes.INTEGER,
@@ -12,24 +12,20 @@ const CareerPath = sequelize.define(
       autoIncrement: true,
       allowNull: false,
     },
-    ideal_role_id: {
+    career_path_id: {
       type: DataTypes.INTEGER,
       allowNull: false,
     },
-    step_order: {
+    course_id: {
       type: DataTypes.INTEGER,
-      allowNull: false,
-    },
-    role_title: {
-      type: DataTypes.STRING(150),
       allowNull: false,
     },
   },
   {
-    tableName: 'career_paths',
+    tableName: 'career_path_step_courses',
     timestamps: true,
     underscored: true,
   }
 );
 
-module.exports = CareerPath;
+module.exports = CareerPathStepCourse;

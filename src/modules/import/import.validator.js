@@ -14,6 +14,7 @@
  *   • Email missing or blank
  *   • Email invalid format (must contain @ and domain)
  *   • Email duplicated within the same file (second+ occurrence skipped)
+ *   • Email already belongs to a different employee in the DB (cross-record conflict)
  *
  * ── What generates a WARNING (row still proceeds) ─────────────────────────────
  *   • Band/Level exceeds 50 characters — will be truncated
@@ -80,6 +81,15 @@ function validateRow(row, rowNo) {
       `Invalid email format: "${row.reports_to_email}" — manager_id will not be set via this field`
     );
   }
+  if (row.org_role_name?.length > 150) {
+    pushWarn('Org Role', 'Exceeds 150 characters — will be truncated to 150');
+  }
+  if (row.ideal_role_name?.length > 150) {
+    pushWarn('Ideal Role', 'Exceeds 150 characters — will be truncated to 150');
+  }
+  if (row.primary_tech_stack_name?.length > 150) {
+    pushWarn('Primary Tech Stack', 'Exceeds 150 characters — will be truncated to 150');
+  }
 
   return { errors, warnings };
 }
@@ -93,6 +103,7 @@ function validateRow(row, rowNo) {
  *   seenEmails  — duplicate email within the file
  *
  * @param {object[]} rows
+ * @param {Map<string,string>} existingEmailMap  email_lower → employee_number_upper from DB
  * @returns {{
  *   validRows:   object[],
  *   allErrors:   object[],
@@ -100,7 +111,7 @@ function validateRow(row, rowNo) {
  *   skipped:     number,   — total rows not imported (errors + duplicates)
  * }}
  */
-function validateRows(rows) {
+function validateRows(rows, existingEmailMap = new Map()) {
   const allErrors   = [];
   const allWarnings = [];
   const seenEmpNums = new Map(); // UPPER(emp#)  → first rowNo
@@ -138,6 +149,19 @@ function validateRows(rows) {
       return false; // skip
     }
     if (email && EMAIL_RE.test(email)) seenEmails.set(email, rowNo);
+
+    // ── Email already owned by a different employee in DB ─────────────────
+    if (email && EMAIL_RE.test(email) && empNum) {
+      const ownerEmpNum = existingEmailMap.get(email);
+      if (ownerEmpNum && ownerEmpNum !== empNum) {
+        allErrors.push({
+          row:     rowNo,
+          field:   'Email',
+          message: `Email "${row.email}" already belongs to employee ${ownerEmpNum} in the system — row skipped.`,
+        });
+        return false;
+      }
+    }
 
     // ── Per-row field validation ───────────────────────────────────────────
     const { errors, warnings } = validateRow(row, rowNo);

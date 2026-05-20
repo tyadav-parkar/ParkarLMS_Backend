@@ -13,16 +13,10 @@ const { AppError }     = require('../../core/errors/AppError');
 const logger           = require('../../core/utils/logger');
 const { parseExcel }   = require('./import.parser');
 const { validateRows } = require('./import.validator');
-const { processRows }  = require('./import.service');
+const { processRows, fetchExistingEmailMap } = require('./import.service');
 const ImportLog        = require('./importLog.model');
 
-const MAX_FILE_SIZE_BYTES = (parseInt(process.env.IMPORT_MAX_FILE_SIZE_MB) || 5) * 1024 * 1024;
-const MAX_ROWS            =  parseInt(process.env.IMPORT_MAX_ROWS)         || 500;
-
-const ALLOWED_MIMETYPES = new Set([
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/vnd.ms-excel',
-]);
+const MAX_ROWS  = parseInt(process.env.IMPORT_MAX_ROWS) || 500;
 
 const OPERATION = 'EMPLOYEE_IMPORT';
 
@@ -57,17 +51,11 @@ const importEmployees = asyncWrapper(async (req, res) => {
     if (!req.file) {
       throw new AppError('No file received. Send multipart/form-data with field name "file".', 400);
     }
-    if (req.file.size > MAX_FILE_SIZE_BYTES) {
-      throw new AppError(`File exceeds the ${process.env.IMPORT_MAX_FILE_SIZE_MB || 5} MB limit.`, 413);
-    }
-    if (!ALLOWED_MIMETYPES.has(req.file.mimetype)) {
-      throw new AppError('Unsupported file type. Only .xlsx and .xls files are accepted.', 415);
-    }
 
     // ── Step 1: Parse ───────────────────────────────────────────────────────
     try {
       parsed = parseExcel(req.file.buffer, { maxRows: MAX_ROWS });
-      logger.info('Import file parsed', { ...context, totalRows: parsed.totalRows });
+      logger.info('Import file parsed', { ...context, parsedRows: parsed.parsedRows, fileDataRows: parsed.fileDataRows });
     } catch (parseErr) {
       throw new AppError(parseErr.message, parseErr.statusCode || 422);
     }
@@ -77,7 +65,8 @@ const importEmployees = asyncWrapper(async (req, res) => {
     }
 
     // ── Step 2: Validate ───────────────────────────────────────────────────
-    validationOutcome = validateRows(parsed.rows);
+    const existingEmailMap = await fetchExistingEmailMap();
+    validationOutcome = validateRows(parsed.rows, existingEmailMap);
     const { validRows, allErrors, allWarnings, skipped } = validationOutcome;
     const totalSkipped = skipped;
 
@@ -103,6 +92,13 @@ const importEmployees = asyncWrapper(async (req, res) => {
 
     // ── Step 4: Build final warnings ───────────────────────────────────────
     const finalWarnings = [...allWarnings, ...processingResult.managerWarnings];
+
+    if (parsed.fileDataRows > parsed.parsedRows) {
+      finalWarnings.push({
+        field:   'Row Limit',
+        message: `File contains ${parsed.fileDataRows} data rows but only the first ${parsed.parsedRows} were processed (limit: ${MAX_ROWS}). Split the file to import the remaining ${parsed.fileDataRows - parsed.parsedRows} rows.`,
+      });
+    }
 
     if (processingResult.softDeleted > 0) {
       finalWarnings.push({
@@ -131,7 +127,7 @@ const importEmployees = asyncWrapper(async (req, res) => {
     await persistImportLog({
       uploaded_by: req.user.id,
       file_name:   req.file.originalname,
-      total_rows:  parsed.totalRows,
+      total_rows:  parsed.fileDataRows,
       inserted:    processingResult.inserted,
       updated:     processingResult.updated,
       skipped:     totalSkipped,
@@ -149,7 +145,8 @@ const importEmployees = asyncWrapper(async (req, res) => {
         ? 'Import completed successfully.'
         : 'Import completed with warnings.',
       summary: {
-        total_rows_in_file:  parsed.totalRows,
+        total_rows_in_file:  parsed.fileDataRows,
+        rows_processed:      parsed.parsedRows,
         inserted:            processingResult.inserted,
         updated:             processingResult.updated,
         skipped:             totalSkipped,
@@ -175,7 +172,7 @@ const importEmployees = asyncWrapper(async (req, res) => {
     await persistImportLog({
       uploaded_by: req.user?.id ?? null,
       file_name:   req.file?.originalname ?? 'unknown',
-      total_rows:  parsed?.totalRows ?? 0,
+      total_rows:  parsed?.fileDataRows ?? 0,
       inserted:    processingResult?.inserted ?? 0,
       updated:     processingResult?.updated ?? 0,
       skipped:     validationOutcome?.skipped ?? 0,

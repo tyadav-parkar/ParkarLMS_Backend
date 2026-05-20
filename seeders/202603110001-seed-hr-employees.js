@@ -20,49 +20,71 @@ module.exports = {
 
   async up(queryInterface) {
     const now = new Date();
+    const transaction = await queryInterface.sequelize.transaction();
+    try {
+      /* ── Fetch admin role id ─────────────────────────────────────────────── */
+      const [roles] = await queryInterface.sequelize.query(
+        `SELECT id FROM roles WHERE name = 'admin' AND is_system_role = true`,
+        { transaction }
+      );
+      if (roles.length === 0) {
+        throw new Error("Role 'admin' not found — run roles-seed.js first.");
+      }
+      const adminRoleId = roles[0].id;
 
-    /* ── Fetch admin role id ─────────────────────────────────────────────── */
-    const [roles] = await queryInterface.sequelize.query(
-      `SELECT id FROM roles WHERE name = 'admin' AND is_system_role = true`
-    );
-    if (roles.length === 0) {
-      throw new Error("Role 'admin' not found — run roles-seed.js first.");
+      /* ── Check if admin employee exists ─────────────────────────────────── */
+      const [empRows] = await queryInterface.sequelize.query(
+        `SELECT id FROM employees WHERE employee_number = ?`,
+        { replacements: ['PCG0442'], transaction }
+      );
+
+      let adminEmpId;
+      if (empRows.length === 0) {
+        /* ── Insert admin employee ───────────────────────────────────────── */
+        await queryInterface.bulkInsert('employees', [{
+          employee_number: 'PCG0442',
+          first_name:      'Sanket',
+          last_name:       'Rasal',
+          email:           'srasal@parkar.in',
+          department_id:   null,
+          manager_id:      null,
+          job_title:       'Admin',
+          band_identifier: 'L5',
+          is_active:       true,
+          password_hash:   null,
+          created_at:      now,
+          updated_at:      now,
+        }], { transaction });
+
+        const [newEmpRows] = await queryInterface.sequelize.query(
+          `SELECT id FROM employees WHERE employee_number = ?`,
+          { replacements: ['PCG0442'], transaction }
+        );
+        adminEmpId = newEmpRows[0].id;
+      } else {
+        adminEmpId = empRows[0].id;
+      }
+
+      /* ── Assign admin role if not already assigned ─────────────────────── */
+      const [assigned] = await queryInterface.sequelize.query(
+        `SELECT employee_id FROM employee_roles WHERE employee_id = ? AND role_id = ? LIMIT 1`,
+        { replacements: [adminEmpId, adminRoleId], transaction }
+      );
+      if (assigned.length === 0) {
+        await queryInterface.bulkInsert('employee_roles', [{
+          employee_id: adminEmpId,
+          role_id:     adminRoleId,
+          is_primary:  true,
+          assigned_at: now,
+        }], { transaction });
+      }
+
+      await transaction.commit();
+      console.log('✅ Admin ensured: PCG0442 — department will be set via Excel import');
+    } catch (err) {
+      await transaction.rollback();
+      throw err;
     }
-    const adminRoleId = roles[0].id;
-
-    /* ── Insert admin employee ───────────────────────────────────────────── */
-    // department_id is null — admin's department will be set via Excel import
-    // if needed, or can be set manually via User Management later.
-    await queryInterface.bulkInsert('employees', [{
-      employee_number: 'PCG0442',
-      first_name:      'Sanket',
-      last_name:       'Rasal',
-      email:           'srasal@parkar.in',
-      department_id:   null,
-      manager_id:      null,
-      job_title:       'Admin',
-      band_identifier: 'L5',
-      is_active:       true,
-      password_hash:   null,
-      created_at:      now,
-      updated_at:      now,
-    }]);
-
-    /* ── Fetch inserted admin id ─────────────────────────────────────────── */
-    const [empRows] = await queryInterface.sequelize.query(
-      `SELECT id FROM employees WHERE employee_number = 'PCG0442'`
-    );
-    const adminEmpId = empRows[0].id;
-
-    /* ── Assign admin role ───────────────────────────────────────────────── */
-    await queryInterface.bulkInsert('employee_roles', [{
-      employee_id: adminEmpId,
-      role_id:     adminRoleId,
-      is_primary:  true,
-      assigned_at: now,
-    }]);
-
-    console.log('✅ Admin seeded: PCG0442 (tyadav@parkar.in) — department will be set via Excel import');
   },
 
   async down(queryInterface) {

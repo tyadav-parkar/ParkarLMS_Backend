@@ -43,6 +43,14 @@ const HEADER_MAP = {
   'reports to emp no':        'manager_emp_number',
   // Manager email fallback
   'reports to email':         'reports_to_email',
+  // Org / Ideal role (resolved to FK ids in the service)
+  'org role':                 'org_role_name',
+  'org role name':            'org_role_name',
+  'ideal role':               'ideal_role_name',
+  'ideal role name':          'ideal_role_name',
+  // Primary tech stack (resolved to FK id in the service)
+  'primary tech stack':       'primary_tech_stack_name',
+  'primary tech stack name':  'primary_tech_stack_name',
 };
 
 function detectHeaderRowIndex(aoa) {
@@ -59,7 +67,9 @@ function detectHeaderRowIndex(aoa) {
 /**
  * @param {Buffer} buffer
  * @param {{ maxRows?: number }} opts
- * @returns {{ rows: object[], totalRows: number, skippedBlanks: number }}
+ * @returns {{ rows: object[], parsedRows: number, fileDataRows: number, skippedBlanks: number }}
+ *   parsedRows   — rows returned (capped at maxRows)
+ *   fileDataRows — total non-blank data rows actually in the file (may exceed parsedRows)
  * @throws {Error} with .statusCode on structural failures
  */
 function parseExcel(buffer, { maxRows = 500 } = {}) {
@@ -151,15 +161,18 @@ function parseExcel(buffer, { maxRows = 500 } = {}) {
   // ── Parse data rows ───────────────────────────────────────────────────────
   const rows        = [];
   let skippedBlanks = 0;
+  let fileDataRows  = 0; // non-blank rows in file, uncapped
 
   for (let i = dataStartIdx; i < aoa.length; i++) {
-    if (rows.length >= maxRows) break;
-
     const rowArr  = aoa[i];
     const isEmpty = Object.values(colMap).every(
       (ci) => !rowArr[ci] || String(rowArr[ci]).trim() === ''
     );
     if (isEmpty) { skippedBlanks++; continue; }
+
+    fileDataRows++;
+
+    if (rows.length >= maxRows) continue; // count but don't collect past the cap
 
     const row = {};
     for (const [field, ci] of Object.entries(colMap)) {
@@ -176,7 +189,7 @@ function parseExcel(buffer, { maxRows = 500 } = {}) {
     rows.push(row);
   }
 
-  return { rows, totalRows: rows.length, skippedBlanks };
+  return { rows, parsedRows: rows.length, fileDataRows, skippedBlanks };
 }
 
 module.exports = { parseExcel };

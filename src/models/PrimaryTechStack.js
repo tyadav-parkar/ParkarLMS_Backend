@@ -3,8 +3,8 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../core/config/database');
 
-const CareerPath = sequelize.define(
-  'CareerPath',
+const PrimaryTechStack = sequelize.define(
+  'PrimaryTechStack',
   {
     id: {
       type: DataTypes.INTEGER,
@@ -12,24 +12,25 @@ const CareerPath = sequelize.define(
       autoIncrement: true,
       allowNull: false,
     },
-    ideal_role_id: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-    },
-    step_order: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-    },
-    role_title: {
+    name: {
       type: DataTypes.STRING(150),
       allowNull: false,
+      unique: true,
+    },
+    is_active: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
     },
   },
   {
-    tableName: 'career_paths',
+    tableName: 'primary_tech_stacks',
     timestamps: true,
     underscored: true,
+    defaultScope: {
+      where: { is_active: true },
+    },
   }
 );
 
-module.exports = CareerPath;
+module.exports = PrimaryTechStack;

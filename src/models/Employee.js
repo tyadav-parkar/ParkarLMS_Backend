@@ -46,6 +46,22 @@ const Employee = sequelize.define(
       type: DataTypes.STRING(50),
       allowNull: true,
     },
+    ideal_role_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    org_role_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    primary_tech_stack_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    current_career_path_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     // role_id removed — Employee ↔ Role is now M2M via employee_roles junction table
     is_active: {
       type: DataTypes.BOOLEAN,
